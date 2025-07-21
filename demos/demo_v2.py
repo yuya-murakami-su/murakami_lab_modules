@@ -56,9 +56,9 @@ def main():
         regularization=my_regularization,
         train_epochs=10000,
         early_stop=10000,
-        save_path=__file__[:-3],
-        model_name=f'{__file__[:-3]}',
-        train_record_path=f'{__file__[:-3]}_record',
+        save_path=os.path.basename(__file__)[:-3],
+        model_name=f'{os.path.basename(__file__)[:-3]}',
+        train_record_path=f'{os.path.basename(__file__)[:-3]}_record',
         callbacks=('loss_monitor',),
         callback_epoch=100
     )
