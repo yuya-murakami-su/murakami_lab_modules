@@ -328,6 +328,10 @@ class Plotter:
     def save_fig(self, name: str):
         self.fig.savefig(f'{name}.png', transparent=False)
 
+    def display(self):
+        plt.tight_layout()
+        plt.show()
+
     def close(self):
         if self.root is not None:
             self.root.destroy()
