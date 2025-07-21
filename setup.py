@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='murakami_lab_shizuoka_lab',
+    name='murakami_lab_modules',
     version='0.1.0',
     packages=find_packages(),
     install_requires=[
@@ -14,7 +14,7 @@ setup(
     description='A simple library for machine learning',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/yuya_murakami/murakami_lab_shizuoka_env',
+    url='https://github.com/yuya-murakami-su/murakami_lab_modules',
     classifiers=[
         'Programming languages :: Python :: 3',
         'Operating System :: OS Independent',

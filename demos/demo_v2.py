@@ -1,8 +1,8 @@
-from murakami_lab_shizuoka_univ.data_handler import DataHandler
-from murakami_lab_shizuoka_univ.input_generator import InputGenerator
-from murakami_lab_shizuoka_univ.optimizer import OptimizerWithWarmup
-from murakami_lab_shizuoka_univ.neural_network import FeedForwardNeuralNetwork, AbstractNeuralNetwork
-from murakami_lab_shizuoka_univ.model_handler import (
+from murakami_lab_modules.data_handler import DataHandler
+from murakami_lab_modules.input_generator import InputGenerator
+from murakami_lab_modules.optimizer import OptimizerWithWarmup
+from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork, AbstractNeuralNetwork
+from murakami_lab_modules.model_handler import (
     ModelHandler, DataFitting, Regularization, get_relative_error, get_mean_squared_error, get_absolute_error
 )
 
