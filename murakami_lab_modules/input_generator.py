@@ -9,15 +9,18 @@ class InputGenerator:
             device_name: str,
             shuffle: bool = True,
             distribution: str = 'random',
+            random_seed: int = 2025,
             **kwargs
     ):
         self.locals = utils.get_local_dict(locals())
+        utils.initialize_random_seed(random_seed)
 
         self.size_of_generated_inputs = size_of_generated_inputs
         self.device_name = device_name
         self.device = utils.get_device(device_name)
         self.shuffle = shuffle
         self.distribution = distribution
+        self.random_seed = random_seed
         self.kwargs = kwargs
 
         if distribution == 'random':
