@@ -1,0 +1,11 @@
+name: git_env
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pytorch-cuda=12.4
+  - pytorch
+  - pandas
+  - numpy
+  - matplotlib~=3.10.0
+prefix: C:\Users\YuyaMurakami\anaconda3\envs\git_env
