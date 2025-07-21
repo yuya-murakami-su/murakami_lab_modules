@@ -5,6 +5,7 @@ from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork, Abstra
 from murakami_lab_modules.model_handler import (
     ModelHandler, DataFitting, Regularization, get_relative_error, get_mean_squared_error, get_absolute_error
 )
+import os
 
 
 def main():
@@ -13,7 +14,7 @@ def main():
         input_idx=['x', 'y', 'z'],
         output_idx=['f'],
         batch_size=128,
-        device_name='cpu',
+        device_name='cuda:0',
         split_type='random_split',
         split_ratio=(0.8, 0.1, 0.1)
     )
