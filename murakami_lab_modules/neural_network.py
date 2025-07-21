@@ -25,23 +25,30 @@ class AbstractNeuralNetwork(torch.nn.Module):
         self.random_seed = random_seed
         self.kwargs = kwargs
 
-        self.nn: torch.nn.Sequential | torch.nn.ModuleList = self.get_neural_network_model()
+        self.nn = None
 
-    def get_neural_network_model(self) -> torch.nn.Sequential:
-        if self.n_layer == 0:
-            modules = [torch.nn.Linear(self.n_input, self.n_output)]
+    @ staticmethod
+    def get_neural_network_model(
+            n_input: int,
+            n_output: int,
+            n_layer: int,
+            n_node: int,
+            activation: callable
+    ) -> torch.nn.Sequential:
+        if n_layer == 0:
+            modules = [torch.nn.Linear(n_input, n_output)]
 
         else:
-            modules = [torch.nn.Linear(self.n_input, self.n_node)]
-            if self.activation is not None:
-                modules += [self.activation]
+            modules = [torch.nn.Linear(n_input, n_node)]
+            if activation is not None:
+                modules += [activation]
 
-            for _ in range(self.n_layer - 1):
-                modules += [torch.nn.Linear(self.n_node, self.n_node)]
-                if self.activation is not None:
-                    modules += [self.activation]
+            for _ in range(n_layer - 1):
+                modules += [torch.nn.Linear(n_node, n_node)]
+                if activation is not None:
+                    modules += [activation]
 
-            modules += [torch.nn.Linear(self.n_node, self.n_output)]
+            modules += [torch.nn.Linear(n_node, n_output)]
         return torch.nn.Sequential(*modules)
 
 
