@@ -2,8 +2,8 @@ name: git_env
 channels:
   - defaults
 dependencies:
-  - python=3.11
-  - pytorch-cuda=12.4
+  - python=3.12
+  - pytorch-cuda=12.1
   - pytorch
   - pandas
   - numpy
