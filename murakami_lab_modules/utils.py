@@ -68,12 +68,13 @@ def save_txt(txt_name: str, **kwargs):
                     txt.write(f'{key}\t{type(value).__name__}\t{value.__name__}\n')
                 elif hasattr(value, '__class__'):
                     txt.write(f'{key}\t{type(value).__name__}\t{value.__class__.__name__}\n')
-                elif '\t' in str(value) or '\n' in str(value):
-                    txt.write(f'{key}\tarray_like\t{type(value).__name__}\n')
                 else:
                     txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
             else:
-                txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
+                if '\t' in str(value) or '\n' in str(value):
+                    txt.write(f'{key}\tarray_like\t{type(value).__name__}\n')
+                else:
+                    txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
         txt.close()
 
 def load_txt(txt_name: str, default_value: dict = None):
