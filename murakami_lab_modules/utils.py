@@ -68,7 +68,7 @@ def save_txt(txt_name: str, **kwargs):
                     txt.write(f'{key}\t{type(value).__name__}\t{value.__name__}\n')
                 elif hasattr(value, '__class__'):
                     txt.write(f'{key}\t{type(value).__name__}\t{value.__class__.__name__}\n')
-                elif '\t' in value or '\n' in value:
+                elif '\t' in str(value) or '\n' in str(value):
                     txt.write(f'{key}\tarray_like\t{type(value).__name__}\n')
                 else:
                     txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
