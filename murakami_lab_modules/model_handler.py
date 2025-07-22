@@ -178,7 +178,7 @@ class ModelHandler:
             data_fitting: DataFitting = None,
             regularization: Regularization = None,
             train_epochs: int = None,
-            early_stop: int = None,
+            early_stop: int = 0,
             load_model: str = None,
             load_optimizer: bool = False,
             save_path: str = 'Model',
@@ -244,7 +244,7 @@ class ModelHandler:
         if self.model_name is None:
             self.model_name = utils.get_current_time(for_file_name=True)
 
-        if (self.train_epochs is None or self.train_epochs == 0) and self.early_stop is None:
+        if (self.train_epochs is None or self.train_epochs == 0) and self.early_stop == 0:
             raise ValueError('At least of of train_epochs and early_stop must be give.')
 
         if self.callbacks is None:
