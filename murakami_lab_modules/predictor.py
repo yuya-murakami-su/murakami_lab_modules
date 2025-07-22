@@ -116,13 +116,13 @@ class NNPredictor(AbstractPredictor):
         )
 
     def _send_to_device(self):
-        state_dicts = torch.load(f'{self.model_path}\\state_dicts.pth', weights_only=True, map_location='cpu')
+        state_dicts = torch.load(f'{self.model_path}\\state_dicts.pth', weights_only=False, map_location='cpu')
         self.nn.load_state_dict(state_dicts['nn_state_dict'])
         self.nn.to(self.device)
         if self.load_normalizer:
             if not os.path.exists(f'{self.model_path}\\normalizer.pth'):
                 raise ValueError('Normalizer is not found. Please set to load_normalizer = False.')
-            self.normalizer = torch.load(f'{self.model_path}\\normalizer.pth', weights_only=True, map_location='cpu')
+            self.normalizer = torch.load(f'{self.model_path}\\normalizer.pth', weights_only=False, map_location='cpu')
             for key in self.normalizer.keys():
                 self.normalizer[key].to(self.device)
         else:
