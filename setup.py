@@ -2,13 +2,13 @@ from setuptools import setup, find_packages
 
 setup(
     name='murakami_lab_modules',
-    version='0.1.4',
+    version='0.1.5',
     packages=find_packages(),
     install_requires=[
         'numpy>1.26.0',
         'pandas>2.2.0',
         'torch>2.5.1',
-        'matplotlib>3.10.0'
+        'matplotlib>3.9.0'
     ],
     author='Yuya Murakami',
     description='A simple library for machine learning',

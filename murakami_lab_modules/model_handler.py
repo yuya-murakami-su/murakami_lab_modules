@@ -737,6 +737,8 @@ class ModelHandler:
         with torch.no_grad():
             results = {}
             for key in ['train', 'valid', 'test']:
+                if self.data_fitting.data_handler.n_data[key] == 0:
+                    continue
                 y_list, y_pred_list = [], []
                 for x, y, label in self.data_fitting.data_handler(key):
                     y_pred = self.nn(x)
@@ -777,6 +779,8 @@ class ModelHandler:
                 y_lim=(y_min_ - dy, y_max_ + dy)
             )
             for key in ['train', 'valid', 'test']:
+                if self.data_fitting.data_handler.n_data[key] == 0:
+                    continue
                 total_plotter.scatter(x=results[key][0][:, y_idx], y=results[key][1][:, y_idx], label=key)
                 individual_plotter.plot(
                     x=[y_min_ - dy, y_max_ + dy], y=[y_min_ - dy, y_max_ + dy], color='k', line_width=2
