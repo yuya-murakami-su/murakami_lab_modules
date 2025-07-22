@@ -8,7 +8,7 @@ setup(
         'numpy>1.26.0',
         'pandas>2.2.0',
         'torch>2.5.1',
-        'matplotlib>3.10.0'
+        'matplotlib>3.9.0'
     ],
     author='Yuya Murakami',
     description='A simple library for machine learning',
