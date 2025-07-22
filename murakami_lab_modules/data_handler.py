@@ -119,7 +119,7 @@ class DataHandler:
 
     def _random_split(self, split_ratio: tuple = None, **_: dict):
         if split_ratio is None:
-            raise 'split_ratio must be specified for _random_split'
+            raise ValueError('split_ratio must be specified for _random_split')
 
         self.train, self.valid, self.test = self.dataset.random_split(split_ratio)
 
@@ -131,7 +131,7 @@ class DataHandler:
             **_: dict
     ):
         if train_indices is None:
-            raise 'indices must be specified for _index_split'
+            raise ValueError('indices must be specified for _index_split')
 
         self.train = self.dataset.index_split(train_indices)
         if valid_indices is not None:
