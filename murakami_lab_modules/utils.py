@@ -68,6 +68,8 @@ def save_txt(txt_name: str, **kwargs):
                     txt.write(f'{key}\t{type(value).__name__}\t{value.__name__}\n')
                 elif hasattr(value, '__class__'):
                     txt.write(f'{key}\t{type(value).__name__}\t{value.__class__.__name__}\n')
+                elif '\t' in value or '\n' in value:
+                    txt.write(f'{key}\tarray_like\t{type(value).__name__}\n')
                 else:
                     txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
             else:
@@ -89,6 +91,8 @@ def load_txt(txt_name: str, default_value: dict = None):
                     kwargs[key] = value
                 elif type_str == 'bool':
                     kwargs[key] = bool(value)
+                elif type_str == 'array_like':
+                    kwargs[key] = 'array_like'
                 else:
                     kwargs[key] = value
         return kwargs
