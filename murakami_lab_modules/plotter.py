@@ -196,7 +196,7 @@ class Plotter:
         if alpha == 1.0:
             self.ax.scatter(
                 x, y,
-                s=marker_size,
+                s=marker_size ** 2,
                 facecolor=color,
                 edgecolors='k',
                 linewidths=self.main_line_width,
@@ -208,7 +208,7 @@ class Plotter:
         else:
             self.ax.scatter(
                 x, y,
-                s=marker_size,
+                s=marker_size ** 2,
                 facecolor=color,
                 alpha=alpha,
                 linewidths=0,
@@ -218,7 +218,7 @@ class Plotter:
             )
             self.ax.scatter(
                 x, y,
-                s=marker_size,
+                s=marker_size ** 2,
                 facecolor='none',
                 edgecolors='k',
                 linewidths=self.main_line_width,
@@ -230,7 +230,7 @@ class Plotter:
             self.ax.scatter(
                 [], [],
                 label=label,
-                s=marker_size,
+                s=marker_size ** 2,
                 facecolor=color,
                 edgecolors='k',
                 linewidths=self.main_line_width,
