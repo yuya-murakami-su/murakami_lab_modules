@@ -89,7 +89,11 @@ class DataHandler:
 
     def _normalize_data(self):
         self._input_normalizer()
+        if not hasattr(self, 'normed_inputs'):
+            self.normed_inputs = self.inputs.clone()
         self._output_normalizer()
+        if not hasattr(self, 'normed_outputs'):
+            self.normed_inputs = self.inputs.clone()
 
     def _input_normalizer(self):
         self.normed_inputs, self.input_ave, self.input_std = (
