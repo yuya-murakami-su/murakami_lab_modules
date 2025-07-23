@@ -183,23 +183,23 @@ class DataHandler:
         self.n_batch = {key: self.data_loader[key].n_batch for key in self.data_loader.keys()}
 
     def normalize_x(self, x: torch.Tensor):
-        return (x - self.inputs_ave) / self.inputs_std
+        return (x - self.input_ave) / self.input_std
 
     def normalize_y(self, y: torch.Tensor):
-        return (y - self.outputs_ave) / self.outputs_std
+        return (y - self.output_ave) / self.output_std
 
     def undo_normalize_x(self, x: torch.Tensor):
-        return x * self.inputs_std + self.inputs_ave
+        return x * self.input_std + self.input_ave
 
     def undo_normalize_y(self, y: torch.Tensor):
-        return y * self.outputs_std + self.outputs_ave
+        return y * self.output_std + self.output_ave
 
     def normalizer_dict(self):
         return {
-            'inputs_ave': self.inputs_ave,
-            'inputs_std': self.inputs_std,
-            'outputs_ave': self.outputs_ave,
-            'outputs_std': self.outputs_std
+            'input_ave': self.input_ave,
+            'input_std': self.input_std,
+            'output_ave': self.output_ave,
+            'output_std': self.output_std
         }
 
     def __call__(self, dataset_name: str):
