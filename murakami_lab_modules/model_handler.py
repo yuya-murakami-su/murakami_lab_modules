@@ -712,6 +712,16 @@ class ModelHandler:
             plotter.save_fig(name=f'{self_.model_path}\\loss_evolution\\{self_.epoch + 1:0>6}')
         return init, update
 
+    def _state_dict_saver(self):
+        os.makedirs(f'{self.model_path}\\state_dicts')
+
+        def init():
+            return []
+
+        def update(self_):
+            torch.save(self.state_dicts, f'{self_.model_path}\\state_dicts\\{self_.epoch + 1:0>6}')
+        return init, update
+
     def _save_loss_monitor(self):
         n_data, get_xy = self._get_loss_info_fnc()
         plotter = Plotter(
