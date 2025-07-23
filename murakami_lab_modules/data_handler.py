@@ -19,6 +19,8 @@ class DataHandler:
             output_data_path: str = None,
             unnormalized_input_idx: list = None,
             unnormalized_output_idx: list = None,
+            input_normalizer_name: str = 'default_normalizer',
+            output_normalizer_name: str = 'default_normalizer',
             split_type: str = 'random_split',
             is_validation_data_batched: bool = False,
             use_train_as_valid: bool = False,
@@ -37,6 +39,8 @@ class DataHandler:
         self.device_name = device_name
         self.unnormalized_input_idx = unnormalized_input_idx
         self.unnormalized_output_idx = unnormalized_output_idx
+        self.input_normalizer_name = input_normalizer_name
+        self.output_normalizer_name = output_normalizer_name
         self.split_type = split_type
         self.is_validation_data_batched = is_validation_data_batched
         self.use_train_as_valid = use_train_as_valid
@@ -54,7 +58,6 @@ class DataHandler:
 
         self._load_datafiles()
         self._send_to_device()
-        self._get_normalizer()
         self._normalize_data()
         self._get_default_dataset()
         exec(f'self._{split_type}(**self.kwargs)')
@@ -88,6 +91,13 @@ class DataHandler:
             raise NotImplementedError
         return loaded
 
+    def _normalize_data(self):
+        input_normalizer = getattr(self, f'_{self.input_normalizer_name}')
+        self.normed_inputs, self.input_ave, self.input_std = input_normalizer(self.inputs, self.unnormalized_input_idx)
+        output_normalizer = getattr(self, f'_{self.output_normalizer_name}')
+        self.normed_outputs, self.output_ave, self.output_std = (
+            output_normalizer(self.outputs, self.unnormalized_output_idx))
+
     def _default_normalizer(self, data: torch.Tensor, avoid_indices: list) -> (torch.Tensor, torch.Tensor):
         ave = data.mean(dim=0, keepdim=True)
         std = data.std(dim=0, keepdim=True)
@@ -102,15 +112,9 @@ class DataHandler:
             ave[:, avoid_indices] = 0
             std[:, avoid_indices] = 1
 
-        return ave, std
+        normalized = (data - ave) / std
 
-    def _get_normalizer(self):
-        self.inputs_ave, self.inputs_std = self._default_normalizer(self.inputs, self.unnormalized_input_idx)
-        self.outputs_ave, self.outputs_std = self._default_normalizer(self.outputs, self.unnormalized_output_idx)
-
-    def _normalize_data(self):
-        self.normed_inputs = (self.inputs - self.inputs_ave) / self.inputs_std
-        self.normed_outputs = (self.outputs - self.outputs_ave) / self.outputs_std
+        return normalized, ave, std
 
     def _get_default_dataset(self):
         self.dataset = Dataset(self.normed_inputs, self.normed_outputs, self.labels)
