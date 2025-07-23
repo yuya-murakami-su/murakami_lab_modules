@@ -392,3 +392,4 @@ class Plotter:
     def close(self):
         if self.root is not None:
             self.root.destroy()
+        plt.close(self.fig)
