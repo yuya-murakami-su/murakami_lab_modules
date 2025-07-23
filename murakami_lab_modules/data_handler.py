@@ -19,8 +19,6 @@ class DataHandler:
             output_data_path: str = None,
             unnormalized_input_idx: list = None,
             unnormalized_output_idx: list = None,
-            input_normalizer_name: str = 'default_normalizer',
-            output_normalizer_name: str = 'default_normalizer',
             split_type: str = 'random_split',
             is_validation_data_batched: bool = False,
             use_train_as_valid: bool = False,
@@ -39,8 +37,6 @@ class DataHandler:
         self.device_name = device_name
         self.unnormalized_input_idx = unnormalized_input_idx
         self.unnormalized_output_idx = unnormalized_output_idx
-        self.input_normalizer_name = input_normalizer_name
-        self.output_normalizer_name = output_normalizer_name
         self.split_type = split_type
         self.is_validation_data_batched = is_validation_data_batched
         self.use_train_as_valid = use_train_as_valid
@@ -92,11 +88,16 @@ class DataHandler:
         return loaded
 
     def _normalize_data(self):
-        input_normalizer = getattr(self, f'_{self.input_normalizer_name}')
-        self.normed_inputs, self.input_ave, self.input_std = input_normalizer(self.inputs, self.unnormalized_input_idx)
-        output_normalizer = getattr(self, f'_{self.output_normalizer_name}')
+        self._input_normalizer()
+        self._output_normalizer()
+
+    def _input_normalizer(self):
+        self.normed_inputs, self.input_ave, self.input_std = (
+            self._default_normalizer(self.inputs, self.unnormalized_input_idx))
+
+    def _output_normalizer(self):
         self.normed_outputs, self.output_ave, self.output_std = (
-            output_normalizer(self.outputs, self.unnormalized_output_idx))
+            self._default_normalizer(self.outputs, self.unnormalized_output_idx))
 
     def _default_normalizer(self, data: torch.Tensor, avoid_indices: list) -> (torch.Tensor, torch.Tensor):
         ave = data.mean(dim=0, keepdim=True)
