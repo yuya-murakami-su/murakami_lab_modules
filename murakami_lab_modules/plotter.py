@@ -24,7 +24,7 @@ class Plotter:
             sub_font_size: float = 14.0,
             font_type: str = 'Times New Roman',
             main_line_width: int = 2,
-            point_size: float = 10.0,
+            marker_size: float = 10.0,
             plot_line_width: int = 3,
             cmap_name: str = 'nipy_spectral',
             n_data: int = 5,
@@ -43,7 +43,7 @@ class Plotter:
         self.font_type = font_type
         self.main_line_width = main_line_width
 
-        self.point_size = point_size
+        self.marker_size = marker_size
         self.plot_line_width = plot_line_width
         self.cmap_name = cmap_name
         self.n_data = n_data
@@ -91,15 +91,21 @@ class Plotter:
         self.ax.patch.set_alpha(1.0)
         self.cmap = plt.get_cmap(self.cmap_name)
 
-    def _finish_plot(self, plot_type: str):
+    def _finish_plot(
+            self,
+            plot_type: str,
+            change_color: bool,
+            change_style: bool,
+            change_shape: bool
+    ):
         self.z_order += 1
-        if self.change_color:
+        if self.change_color or change_color:
             self.color_idx = (self.color_idx + 1) % self.n_data
         if plot_type == 'plot' or plot_type == 'plot_and_scatter':
-            if self.style_idx:
+            if self.change_style or change_style:
                 self.style_idx = (self.style_idx + 1) % len(self.style_list)
         elif plot_type == 'scatter' or plot_type == 'plot_and_scatter':
-            if self.change_shape:
+            if self.change_shape or change_shape:
                 self.shape_idx = (self.shape_idx + 1) % len(self.style_list)
 
     def _get_color(self, is_line: bool):
@@ -115,7 +121,10 @@ class Plotter:
             label: str = '',
             color: str | list = None,
             line_width: int = None,
+            line_style: int | tuple | str = None,
             alpha: float = 0.8,
+            change_color: bool = False,
+            change_style: bool = False,
             **kwargs
     ):
         if type(x) is torch.Tensor:
@@ -124,6 +133,10 @@ class Plotter:
             y = y.detach().cpu().numpy()
         if color is None:
             color = self._get_color(is_line=True)
+        if line_style is None:
+            line_style = self.style_list[self.style_idx]
+        elif type(line_style) is int:
+            line_style = self.style_list[line_style]
         if line_width is None:
             line_width = self.plot_line_width
 
@@ -132,11 +145,18 @@ class Plotter:
             label=label,
             color=color,
             linewidth=line_width,
+            linestyle=line_style,
             zorder=self.z_order,
             alpha=alpha,
             **kwargs
         )
-        self._finish_plot('plot')
+
+        self._finish_plot(
+            'plot_and_scatter',
+            change_color=change_color,
+            change_style=change_style,
+            change_shape=False
+        )
 
     def scatter(
             self,
@@ -146,7 +166,11 @@ class Plotter:
             y_err: np.ndarray | torch.Tensor = None,
             label: str = '',
             color: str | list = None,
+            marker: int | str = None,
+            marker_size: float = None,
             alpha: float = 0.8,
+            change_color: bool = False,
+            change_shape: bool = False,
             **kwargs
     ):
         if type(x) is torch.Tensor:
@@ -155,6 +179,12 @@ class Plotter:
             y = y.detach().cpu().numpy()
         if color is None:
             color = self._get_color(is_line=False)
+        if marker is None:
+            marker = self.shape_list[self.shape_idx]
+        if marker_size is None:
+            marker_size = self.marker_size
+        elif type(marker) is int:
+            marker = self.shape_list[marker]
 
         if x_err is not None:
             self.ax.errorbar(x, y, x_err=y_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
@@ -166,50 +196,55 @@ class Plotter:
         if alpha == 1.0:
             self.ax.scatter(
                 x, y,
-                s=self.point_size ** 2,
+                s=marker_size,
                 facecolor=color,
                 edgecolors='k',
                 linewidths=self.main_line_width,
                 label=label,
-                marker=self.shape_list[self.shape_idx],
+                marker=marker,
                 zorder=self.z_order,
                 **kwargs
             )
         else:
             self.ax.scatter(
                 x, y,
-                s=self.point_size ** 2,
+                s=marker_size,
                 facecolor=color,
                 alpha=alpha,
                 linewidths=0,
-                marker=self.shape_list[self.shape_idx],
+                marker=marker,
                 zorder=self.z_order,
                 **kwargs
             )
             self.ax.scatter(
                 x, y,
-                s=self.point_size ** 2,
+                s=marker_size,
                 facecolor='none',
                 edgecolors='k',
                 linewidths=self.main_line_width,
                 alpha=1.0,
-                marker=self.shape_list[self.shape_idx],
+                marker=marker,
                 zorder=self.z_order,
                 **kwargs
             )
             self.ax.scatter(
                 [], [],
                 label=label,
-                s=self.point_size ** 2,
+                s=marker_size,
                 facecolor=color,
                 edgecolors='k',
                 linewidths=self.main_line_width,
-                marker=self.shape_list[self.shape_idx],
+                marker=marker,
                 zorder=self.z_order,
                 **kwargs
             )
 
-        self._finish_plot('scatter')
+        self._finish_plot(
+            'plot_and_scatter',
+            change_color=change_color,
+            change_style=False,
+            change_shape=change_shape
+        )
 
     def plot_and_scatter(
             self,
@@ -220,7 +255,13 @@ class Plotter:
             label: str = '',
             line_color: str | list = None,
             face_color: str | list = None,
+            marker: int | str = None,
+            marker_size: float = None,
+            line_style: int | tuple | str = None,
             line_width: int = None,
+            change_color: bool = False,
+            change_style: bool = False,
+            change_shape: bool = False,
             **kwargs
     ):
         if type(x) is torch.Tensor:
@@ -231,6 +272,16 @@ class Plotter:
             line_color = self._get_color(is_line=True)
         if face_color is None:
             face_color = self._get_color(is_line=False)
+        if marker is None:
+            marker = self.shape_list[self.shape_idx]
+        if marker_size is None:
+            marker_size = self.marker_size
+        elif type(marker) is int:
+            marker = self.shape_list[marker]
+        if line_style is None:
+            line_style = self.style_list[self.style_idx]
+        elif type(line_style) is int:
+            line_style = self.style_list[line_style]
         if line_width is None:
             line_width = self.plot_line_width
 
@@ -244,19 +295,24 @@ class Plotter:
         self.ax.plot(
             x, y,
             label=label,
-            marker=self.shape_list[self.shape_idx],
-            markersize=self.point_size,
+            marker=marker,
+            markersize=marker_size,
             markerfacecolor=face_color,
             markeredgecolor='k',
             color=line_color,
             linewidth=line_width,
-            linestyle=self.style_list[self.style_idx],
+            linestyle=line_style,
             zorder=self.z_order,
             **kwargs
         )
         self.z_order += 1
 
-        self._finish_plot('plot_and_scatter')
+        self._finish_plot(
+            'plot_and_scatter',
+            change_color=change_color,
+            change_style=change_style,
+            change_shape=change_shape
+        )
 
     def remove_plots(self, reset_idx: bool = True):
         for line in self.ax.lines:
@@ -328,6 +384,7 @@ class Plotter:
     def save_fig(self, name: str):
         self.fig.savefig(f'{name}.png', transparent=False)
 
+    @staticmethod
     def display(self):
         plt.tight_layout()
         plt.show()
