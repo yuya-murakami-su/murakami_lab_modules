@@ -700,6 +700,16 @@ class ModelHandler:
             )
             return [plotter]
 
+        def update(self_, plotter: Plotter):
+            plotter.remove_plots()
+            x, ys, labels = get_xy(self_.evolution, self_.epoch)
+            for y, label in zip(ys, labels):
+                plotter.plot(x=x, y=y, label=label)
+            plotter.add_details(x_lim=(0, self_.epoch), legend_outside=True)
+            plotter.update()
+
+        return init, update
+
     def _loss_monitor(self):
         n_data, get_xy = self._get_loss_info_fnc(need_data = True, need_reg = False)
 
@@ -715,6 +725,16 @@ class ModelHandler:
                 y_log=True
             )
             return [plotter]
+
+        def update(self_, plotter: Plotter):
+            plotter.remove_plots()
+            x, ys, labels = get_xy(self_.evolution, self_.epoch)
+            for y, label in zip(ys, labels):
+                plotter.plot(x=x, y=y, label=label)
+            plotter.add_details(x_lim=(0, self_.epoch), legend_outside=True)
+            plotter.update()
+
+        return init, update
 
     def _reg_monitor(self):
         n_data, get_xy = self._get_loss_info_fnc(need_data = False, need_reg = True)
