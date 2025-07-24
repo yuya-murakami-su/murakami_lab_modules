@@ -615,25 +615,53 @@ class ModelHandler:
 
         pd.DataFrame(prediction_results, columns=columns).to_csv(f'{self.model_path}\\prediction_results.csv')
 
-    def _get_loss_info_fnc(self):
+    def _get_loss_info_fnc(self, need_data: bool = True, need_reg: bool = True):
         if self.has_data:
             if self.has_reg:
-                n_data = 4 + self.regularization.n_reg
+                if need_data and need_reg:
+                    n_data = 4 + self.regularization.n_reg
 
-                def get_xy(evolution: np.ndarray, epoch: int):
-                    x = evolution[:epoch, 0]
-                    ys = [
-                            evolution[:epoch, 2],
-                            evolution[:epoch, self.regularization.n_reg + 4],
-                            evolution[:epoch, self.regularization.n_reg + 5],
-                            evolution[:epoch, self.regularization.n_reg + 6]
-                        ] + [
-                            evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
-                            range(self.regularization.n_reg)
-                        ]
-                    labels = (['Train (data)', 'Valid (total)', 'Valid (data)', 'Valid (reg)'] +
-                             self.regularization.reg_names)
-                    return x, ys, labels
+                    def get_xy(evolution: np.ndarray, epoch: int):
+                        x = evolution[:epoch, 0]
+                        ys = [
+                                evolution[:epoch, 2],
+                                evolution[:epoch, self.regularization.n_reg + 4],
+                                evolution[:epoch, self.regularization.n_reg + 5],
+                                evolution[:epoch, self.regularization.n_reg + 6]
+                            ] + [
+                                evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
+                                range(self.regularization.n_reg)
+                            ]
+                        labels = (['Train (data)', 'Valid (total)', 'Valid (data)', 'Valid (reg)'] +
+                                 self.regularization.reg_names)
+                        return x, ys, labels
+
+                elif need_data:
+                    n_data = 2
+
+                    def get_xy(evolution: np.ndarray, epoch: int):
+                        x = evolution[:epoch, 0]
+                        ys = [
+                                evolution[:epoch, 2],
+                                evolution[:epoch, self.regularization.n_reg + 5]
+                            ]
+                        labels = ['Train (data)', 'Valid (data)']
+                        return x, ys, labels
+
+                elif need_reg:
+                    n_data = self.regularization.n_reg
+
+                    def get_xy(evolution: np.ndarray, epoch: int):
+                        x = evolution[:epoch, 0]
+                        ys = [
+                                evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
+                                range(self.regularization.n_reg)
+                            ]
+                        labels = self.regularization.reg_names
+                        return x, ys, labels
+
+                else:
+                    raise ValueError('At least one of need_loss or need_reg must be True.')
             else:
                 n_data = 2
 
@@ -656,8 +684,40 @@ class ModelHandler:
                 return x, ys, labels
         return n_data, get_xy
 
-    def _loss_monitor(self):
+    def _loss_reg_monitor(self):
         n_data, get_xy = self._get_loss_info_fnc()
+
+        def init():
+            plotter = Plotter(
+                window_name='loss_monitor',
+                n_data=n_data
+            )
+            plotter.add_details(
+                title='Loss monitor',
+                x_label='Training epochs [-]',
+                y_label='Loss [-]',
+                y_log=True
+            )
+            return [plotter]
+
+    def _loss_monitor(self):
+        n_data, get_xy = self._get_loss_info_fnc(need_data = True, need_reg = False)
+
+        def init():
+            plotter = Plotter(
+                window_name='loss_monitor',
+                n_data=n_data
+            )
+            plotter.add_details(
+                title='Loss monitor',
+                x_label='Training epochs [-]',
+                y_label='Loss [-]',
+                y_log=True
+            )
+            return [plotter]
+
+    def _reg_monitor(self):
+        n_data, get_xy = self._get_loss_info_fnc(need_data = False, need_reg = True)
 
         def init():
             plotter = Plotter(
