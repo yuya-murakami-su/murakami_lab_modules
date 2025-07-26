@@ -384,8 +384,7 @@ class Plotter:
     def save_fig(self, name: str):
         self.fig.savefig(f'{name}.png', transparent=False)
 
-    @staticmethod
-    def display(self):
+    def display():
         plt.tight_layout()
         plt.show()
 
