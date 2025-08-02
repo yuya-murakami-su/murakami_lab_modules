@@ -104,7 +104,7 @@ class NNPredictor(AbstractPredictor):
 
     def _prepare_nn(self):
         nn_locals = utils.load_txt(f'{self.model_path}\\nn_params')
-        activation = getattr(torch.nn, nn_locals['activation'])()
+        activation = getattr(torch.nn, nn_locals['activation'].replace('(', '').replace(')', ''))()
 
         self.nn = self.nn_class(
             n_input=nn_locals['n_input'],

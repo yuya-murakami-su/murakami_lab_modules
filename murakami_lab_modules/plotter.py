@@ -347,10 +347,16 @@ class Plotter:
             self.ax.set_xlim(*x_lim)
         if y_lim is not None:
             self.ax.set_ylim(*y_lim)
-        if x_log is not None and x_log:
-            self.ax.set_xscale('log')
+        if x_log is not None:
+            if x_log:
+                self.ax.set_xscale('log')
+            else:
+                self.ax.set_xscale('linear')
         if y_log is not None and y_log:
-            self.ax.set_yscale('log')
+            if y_log:
+                self.ax.set_xscale('log')
+            else:
+                self.ax.set_xscale('linear')
         if legend_inside is not None and legend_inside:
             legend = self.ax.get_legend()
             if legend:
