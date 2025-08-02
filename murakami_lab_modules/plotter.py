@@ -354,9 +354,9 @@ class Plotter:
                 self.ax.set_xscale('linear')
         if y_log is not None and y_log:
             if y_log:
-                self.ax.set_xscale('log')
+                self.ax.set_yscale('log')
             else:
-                self.ax.set_xscale('linear')
+                self.ax.set_yscale('linear')
         if legend_inside is not None and legend_inside:
             legend = self.ax.get_legend()
             if legend:
