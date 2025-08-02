@@ -548,7 +548,7 @@ class ModelHandler:
 
     def _load_state_dicts(self, from_outside: bool = False, load_optimizer: bool = False):
         if from_outside:
-            state_dicts = torch.load(f'{self.load_model}\\state_dicts.pth', weights_only=True)
+            state_dicts = torch.load(f'{self.load_model}\\state_dicts.pth')
         else:
             state_dicts = copy.deepcopy(self.state_dicts)
         self.nn.load_state_dict(state_dicts['nn_state_dict'])
