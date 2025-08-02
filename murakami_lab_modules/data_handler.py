@@ -130,6 +130,9 @@ class DataHandler:
         if split_ratio is None:
             raise ValueError('split_ratio must be specified for _random_split')
 
+        if split_ratio[0] > 0.999 and not self.use_train_as_valid:
+            raise ValueError('[Warning] use_train_as_valid was set to False while no valid dataset was given.')
+
         self.train, self.valid, self.test = self.dataset.random_split(split_ratio)
 
     def _index_split(
