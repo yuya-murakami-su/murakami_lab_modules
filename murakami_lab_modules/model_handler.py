@@ -183,6 +183,7 @@ class ModelHandler:
             load_optimizer: bool = False,
             save_path: str = 'Model',
             train_record_path: str = 'train_record',
+            recalculate_valid_loss: bool = True,
             model_name: str = None,
             callback_epoch: int = None,
             callbacks: tuple = None,
@@ -206,6 +207,7 @@ class ModelHandler:
 
         self.save_path = save_path
         self.train_record_path = train_record_path
+        self.recalculate_valid_loss = recalculate_valid_loss
         self.model_name = model_name
         self.kwargs = kwargs
         self.callback_epoch = callback_epoch
@@ -355,7 +357,10 @@ class ModelHandler:
                 if self.has_valid:
                     valid_losses = self._get_loss('valid')
                 else:
-                    valid_losses = self._get_loss('train_valid')
+                    if self.recalculate_valid_loss:
+                        valid_losses = self._get_loss('train_valid')
+                    else:
+                        valid_losses = train_losses
             else:
                 valid_losses = train_losses
 
