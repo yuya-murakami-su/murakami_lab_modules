@@ -53,7 +53,7 @@ class DataFitting:
             check_test: bool = True,
             save_prediction_metrics: tuple = (),
             save_normalized_metrics: tuple = (),
-            save_loss_monitor: bool = False,
+            save_loss_monitor: bool = False,  # TODO: save_loss_monitor should be implemented to regularization too
             save_parity_plot: bool = False
     ):
         self.locals = utils.get_local_dict(locals())
