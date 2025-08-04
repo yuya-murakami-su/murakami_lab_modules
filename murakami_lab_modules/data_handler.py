@@ -107,10 +107,10 @@ class DataHandler:
         ave = data.mean(dim=0, keepdim=True)
         std = data.std(dim=0, keepdim=True)
 
-        if torch.eq(std, 0).any():
-            std = torch.where(torch.eq(std, 0), 1, std)
+        if torch.lt(std, 1e-5).any():
+            std = torch.where(torch.lt(std, 1e-5), 1, std)
             if not self.__class__._std_warned:
-                utils.logging('STD = 0 was found!')
+                utils.logging('STD < 1e-5 was found!')
                 self.__class__._std_warned = True
 
         if avoid_indices is not None:
