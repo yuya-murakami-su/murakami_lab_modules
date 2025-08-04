@@ -130,6 +130,7 @@ class Regularization:
         is_finite = torch.isfinite(full_reg)
         if not is_finite.all():
             if not is_finite.any(dim=1).all():
+                torch.save(full_reg, 'invalid_regularization.pth')
                 raise ValueError(f'Too many invalid value was encountered during regularization.')
             utils.logging(f'Invalid value was encountered during regularization.')
             full_reg = torch.where(is_finite, full_reg, 0.0)
