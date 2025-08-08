@@ -5,4 +5,4 @@ from . import input_generator
 from . import model_handler
 from . import utils
 
-__version__ = '0.1.0'
+__version__ = '0.1.5'
