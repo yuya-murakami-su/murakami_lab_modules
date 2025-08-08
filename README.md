@@ -6,7 +6,7 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 
 # How to install
 ```markdown
-pip install github+https://github.com/yuya-murakami-su/murakami_lab_modules.git
+pip install git+https://github.com/yuya-murakami-su/murakami_lab_modules.git
 ```
 
 # Author
