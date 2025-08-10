@@ -52,9 +52,7 @@ class DataFitting:
             loss_criteria: callable = torch.nn.MSELoss(),
             check_test: bool = True,
             save_prediction_metrics: tuple = (),
-            save_normalized_metrics: tuple = (),
-            save_loss_monitor: bool = False,  # TODO: save_loss_monitor should be implemented to regularization too
-            save_parity_plot: bool = False
+            save_normalized_metrics: tuple = ()
     ):
         self.locals = utils.get_local_dict(locals())
         self.data_handler = data_handler
@@ -62,8 +60,6 @@ class DataFitting:
         self.check_test = check_test
         self.save_prediction_metrics = save_prediction_metrics
         self.save_normalized_metrics = save_normalized_metrics
-        self.save_loss_monitor = save_loss_monitor
-        self.save_parity_plot = save_parity_plot
 
         if type(save_prediction_metrics) is not tuple:
             raise TypeError('save_prediction_metrics must be tuple of metric function.')
@@ -212,12 +208,12 @@ class ModelHandler:
         self.model_name = model_name
         self.kwargs = kwargs
         self.callback_epoch = callback_epoch
-        self.callbacks = callbacks
+        self.callbacks = callbacks or []
+        self._stop_training = False
 
         self._prepare_model_folder()
         self._validate_inputs()
-        self._save_locals()
-        self._save_normalizer()
+        self._save_model_info()
         self._set_model()
         self._prepare_train_record()
         self._prepare_train_valuables()
@@ -250,28 +246,6 @@ class ModelHandler:
         if (self.train_epochs is None or self.train_epochs == 0) and self.early_stop == 0:
             raise ValueError('At least of of train_epochs and early_stop must be give.')
 
-        if self.callbacks is None:
-            self.callbacks = []
-        else:
-            if self.callback_epoch is None:
-                utils.logging(
-                    '[Warning] callback_epoch was not given while callbacks were given. callbacks are ignored.'
-                )
-            else:
-                callbacks = []
-                for callback in self.callbacks:
-                    if type(callback) is str:
-                        init, update = getattr(self, f'_{callback}')()
-                        obj = init()
-                        callbacks.append([update, obj])
-                    elif callback(callback):
-                        init, update = callback()
-                        obj = init()
-                        callbacks.append([update, obj])
-                    else:
-                        raise ValueError('callbacks must be string or callable')
-                self.callbacks = callbacks
-
     def _prepare_model_folder(self):
         folder_idx = 0
         while True:
@@ -283,20 +257,18 @@ class ModelHandler:
         self.model_path = f'{self.save_path}\\{self.model_name}'
         os.makedirs(f'{self.model_path}')
 
-    def _save_locals(self):
+    def _save_model_info(self):
         utils.save_txt(f'{self.model_path}\\nn_params', **self.nn.locals)
         utils.save_txt(f'{self.model_path}\\optimizer_params', **self.optimizer.locals)
         utils.save_txt(f'{self.model_path}\\model_handler_params', **self.locals)
-        if self.data_fitting is not None:
+        if self.has_data:
             utils.save_txt(f'{self.model_path}\\data_fitting_params', **self.data_fitting.locals)
             utils.save_txt(f'{self.model_path}\\data_handler_params', **self.data_fitting.data_handler.locals)
-        if self.regularization is not None:
+            torch.save(self.data_fitting.data_handler.normalizer_dict(), f'{self.model_path}\\normalizer.pth')
+        if self.has_reg:
             utils.save_txt(f'{self.model_path}\\regularization_params', **self.regularization.locals)
             for idx, input_generator_ in enumerate(self.regularization.input_generators):
                 utils.save_txt(f'{self.model_path}\\input_generator_{idx}_params', **input_generator_.locals)
-
-    def _save_normalizer(self):
-        torch.save(self.data_fitting.data_handler.normalizer_dict(), f'{self.model_path}\\normalizer.pth')
 
     def _set_model(self):
         self.optimizer.set_parameters(self.nn.parameters())
@@ -350,8 +322,16 @@ class ModelHandler:
 
         self.evolution = np.empty([self.train_epochs + 1, evolution_col_count])
 
+    def _run_callbacks(self, method: str):
+        for cb in self.callbacks:
+            fn = getattr(cb, method, None)
+            if callable(fn):
+                fn(self)
+
     def __call__(self):
-        while True:
+        self._run_callbacks('on_train_begin')
+        while not self._is_training_finished() and self._stop_training:
+            self._run_callbacks('on_epoch_begin')
             train_losses = self._get_loss('train')
 
             if self.data_fitting is not None:
@@ -369,11 +349,11 @@ class ModelHandler:
             self._update_evolution(train_losses, valid_losses)
             self._finish_epoch()
             self._display_epoch_results()
+            self._run_callbacks('on_epoch_end')
 
-            if self._is_training_finished():
-                break
             self.epoch += 1
 
+        self._run_callbacks('on_train_end')
         self._post_train_treatments()
 
     def _get_loss(self, phase: str):
@@ -528,8 +508,7 @@ class ModelHandler:
         if self.epoch == 0:
             self.t_init = time.perf_counter()
         if self.callback_epoch is not None and (self.epoch + 1) % self.callback_epoch == 0:
-            for update, obj in self.callbacks:
-                update(self, *obj)
+            self._run_callbacks('on_call')
 
     def _is_training_finished(self):
         return (0 < self.early_stop == self.best_updated) or self.train_epochs == self.epoch
@@ -540,12 +519,6 @@ class ModelHandler:
         self._save_model()
         self._save_train_record()
         self._optional_post_train_treatments()
-
-        if self.callback_epoch is not None:
-            for _, obj in self.callbacks:
-                for o in obj:
-                    if type(o) is Plotter:
-                        o.close()
 
     def _load_state_dicts(self, from_outside: bool = False, load_optimizer: bool = False):
         if from_outside:
@@ -584,44 +557,7 @@ class ModelHandler:
             'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
         }
 
-    def _optional_post_train_treatments(self):
-        if self.data_fitting.save_prediction_metrics or self.data_fitting.save_normalized_metrics:
-            self._save_prediction_results()
-        if self.data_fitting.save_loss_monitor:
-            self._save_loss_monitor()
-        if self.data_fitting.save_parity_plot:
-            self._save_parity_plot()
-
-    def _save_prediction_results(self):
-        with torch.no_grad():
-            prediction_results = []
-            for key in ['train', 'valid', 'test']:
-                for x, y, label in self.data_fitting.data_handler(key):
-                    y_pred = self.nn(x)
-
-                    x_ = self.data_fitting.data_handler.undo_normalize_x(x)
-                    y_ = self.data_fitting.data_handler.undo_normalize_y(y)
-                    y_pred_ = self.data_fitting.data_handler.undo_normalize_y(y_pred)
-
-                    evaluated = torch.hstack(
-                        [metric(y_, y_pred_) for metric in self.data_fitting.save_prediction_metrics] +
-                        [metric(y, y_pred) for metric in self.data_fitting.save_normalized_metrics]
-                    )
-                    prediction_results.append(torch.hstack([label, x_, y_, y_pred_, evaluated]))
-            prediction_results = torch.vstack(prediction_results).cpu().numpy()
-
-        columns = (
-                ['label'] +
-                [f'x_{i}' for i in range(self.nn.n_input)] +
-                [f'y_true_{i}' for i in range(self.nn.n_output)] +
-                [f'y_pred_{i}' for i in range(self.nn.n_output)] +
-                [f'{metric.__name__}_pred' for metric in self.data_fitting.save_prediction_metrics] +
-                [f'{metric.__name__}_norm' for metric in self.data_fitting.save_normalized_metrics]
-        )
-
-        pd.DataFrame(prediction_results, columns=columns).to_csv(f'{self.model_path}\\prediction_results.csv')
-
-    def _get_loss_info_fnc(self, need_data: bool = True, need_reg: bool = True):
+    def get_loss_info_fnc(self, need_data: bool = True, need_reg: bool = True):
         if self.has_data:
             if self.has_reg:
                 if need_data and need_reg:
@@ -689,201 +625,3 @@ class ModelHandler:
                 labels = ['Reg (all)'] + self.regularization.reg_names
                 return x, ys, labels
         return n_data, get_xy
-
-    def _loss_reg_monitor(self):
-        n_data, get_xy = self._get_loss_info_fnc()
-
-        def init():
-            plotter = Plotter(
-                window_name='loss_monitor',
-                n_data=n_data
-            )
-            plotter.add_details(
-                title='Loss monitor',
-                x_label='Training epochs [-]',
-                y_label='Loss [-]',
-                y_log=True
-            )
-            return [plotter]
-
-        def update(self_, plotter: Plotter):
-            plotter.remove_plots()
-            x, ys, labels = get_xy(self_.evolution, self_.epoch)
-            for y, label in zip(ys, labels):
-                plotter.plot(x=x, y=y, label=label)
-            plotter.add_details(x_lim=(0, self_.epoch), legend_outside=True)
-            plotter.update()
-
-        return init, update
-
-    def _loss_monitor(self):
-        n_data, get_xy = self._get_loss_info_fnc(need_data = True, need_reg = False)
-
-        def init():
-            plotter = Plotter(
-                window_name='loss_monitor',
-                n_data=n_data
-            )
-            plotter.add_details(
-                title='Loss monitor',
-                x_label='Training epochs [-]',
-                y_label='Loss [-]',
-                y_log=True
-            )
-            return [plotter]
-
-        def update(self_, plotter: Plotter):
-            plotter.remove_plots()
-            x, ys, labels = get_xy(self_.evolution, self_.epoch)
-            for y, label in zip(ys, labels):
-                plotter.plot(x=x, y=y, label=label)
-            plotter.add_details(x_lim=(0, self_.epoch), legend_outside=True)
-            plotter.update()
-
-        return init, update
-
-    def _reg_monitor(self):
-        n_data, get_xy = self._get_loss_info_fnc(need_data = False, need_reg = True)
-
-        def init():
-            plotter = Plotter(
-                window_name='loss_monitor',
-                n_data=n_data
-            )
-            plotter.add_details(
-                title='Loss monitor',
-                x_label='Training epochs [-]',
-                y_label='Loss [-]',
-                y_log=True
-            )
-            return [plotter]
-
-        def update(self_, plotter: Plotter):
-            plotter.remove_plots()
-            x, ys, labels = get_xy(self_.evolution, self_.epoch)
-            for y, label in zip(ys, labels):
-                plotter.plot(x=x, y=y, label=label)
-            plotter.add_details(x_lim=(0, self_.epoch), legend_outside=True)
-            plotter.update()
-
-        return init, update
-
-    def _loss_evolution_saver(self):
-        n_data, get_xy = self._get_loss_info_fnc()
-        os.makedirs(f'{self.model_path}\\loss_evolution')
-
-        def init():
-            plotter = Plotter(
-                window_name='',
-                n_data=n_data
-            )
-            plotter.add_details(
-                title='Loss evolution',
-                x_label='Training epochs [-]',
-                y_label='Loss [-]',
-                y_log=True
-            )
-            return [plotter]
-
-        def update(self_, plotter: Plotter):
-            plotter.remove_plots()
-            x, ys, labels = get_xy(self_.evolution, self_.epoch)
-            for y, label in zip(ys, labels):
-                plotter.plot(x=x, y=y, label=label)
-
-            plotter.add_details(
-                x_lim=(0, self_.epoch),
-                legend_outside=True
-            )
-            plotter.save_fig(name=f'{self_.model_path}\\loss_evolution\\{self_.epoch + 1:0>6}')
-        return init, update
-
-    def _state_dict_saver(self):
-        os.makedirs(f'{self.model_path}\\state_dicts')
-
-        def init():
-            return []
-
-        def update(self_):
-            torch.save(self.state_dicts, f'{self_.model_path}\\state_dicts\\{self_.epoch + 1:0>6}')
-        return init, update
-
-    def _save_loss_monitor(self):
-        n_data, get_xy = self._get_loss_info_fnc()
-        plotter = Plotter(
-            window_name='',
-            n_data=n_data
-        )
-        x, ys, labels = get_xy(self.evolution, self.epoch)
-        for y, label in zip(ys, labels):
-            plotter.plot(x=x, y=y, label=label)
-
-        plotter.add_details(
-            title='Loss monitor',
-            x_label='Training epochs [-]',
-            y_label='Loss [-]',
-            y_log=True,
-            x_lim=(0, self.epoch),
-            legend_outside=True
-        )
-        plotter.save_fig(name=f'{self.model_path}\\loss_monitor')
-
-    def _save_parity_plot(self):
-        y_max, y_min = torch.full([1, self.nn.n_output], -torch.inf), torch.full([1, self.nn.n_output], torch.inf)
-        with torch.no_grad():
-            results = {}
-            for key in ['train', 'valid', 'test']:
-                if self.data_fitting.data_handler.n_data[key] == 0:
-                    continue
-                y_list, y_pred_list = [], []
-                for x, y, label in self.data_fitting.data_handler(key):
-                    y_pred = self.nn(x)
-                    y_ = self.data_fitting.data_handler.undo_normalize_y(y)
-                    y_pred_ = self.data_fitting.data_handler.undo_normalize_y(y_pred)
-                    y_list.append(y_)
-                    y_pred_list.append(y_pred_)
-
-                    y_min, _ = torch.min(torch.vstack([y_, y_pred_, y_min]), dim=0, keepdim=True)
-                    y_max, _ = torch.max(torch.vstack([y_, y_pred_, y_max]), dim=0, keepdim=True)
-
-                results[key] = [torch.vstack(y_list), torch.vstack(y_pred_list)]
-
-        os.makedirs(f'{self.model_path}\\parity_plot')
-        for y_idx in range(self.nn.n_output):
-            y_max_, y_min_ = y_max[0, y_idx], y_min[0, y_idx]
-            dy = (y_max_ - y_min_) * 0.1
-            total_plotter = Plotter(
-                window_name='',
-                n_data=3
-            )
-            total_plotter.plot(x=[y_min_ - dy, y_max_ + dy], y=[y_min_ - dy, y_max_ + dy], color='k', line_width=2)
-            total_plotter.add_details(
-                title=f'Parity plot ({y_idx=})',
-                x_label=r'$y_{true}$',
-                y_label=r'$y_{calc}$',
-                x_lim=(y_min_ - dy, y_max_ + dy),
-                y_lim=(y_min_ - dy, y_max_ + dy)
-            )
-            individual_plotter = Plotter(
-                window_name='',
-                n_data=3
-            )
-            individual_plotter.add_details(
-                x_label=r'$y_{true}$',
-                y_label=r'$y_{calc}$',
-                x_lim=(y_min_ - dy, y_max_ + dy),
-                y_lim=(y_min_ - dy, y_max_ + dy)
-            )
-            for key in ['train', 'valid', 'test']:
-                if self.data_fitting.data_handler.n_data[key] == 0:
-                    continue
-                total_plotter.scatter(x=results[key][0][:, y_idx], y=results[key][1][:, y_idx], label=key)
-                individual_plotter.plot(
-                    x=[y_min_ - dy, y_max_ + dy], y=[y_min_ - dy, y_max_ + dy], color='k', line_width=2
-                )
-                individual_plotter.scatter(x=results[key][0][:, y_idx], y=results[key][1][:, y_idx], label=key)
-                individual_plotter.add_details(title=f'Parity plot ({y_idx=}, {key})')
-                individual_plotter.save_fig(f'{self.model_path}\\parity_plot\\parity_plot_y{y_idx}_{key}')
-                individual_plotter.remove_plots(reset_idx=False)
-            total_plotter.add_details(legend_inside=True)
-            total_plotter.save_fig(f'{self.model_path}\\parity_plot\\parity_plot_y{y_idx}')
