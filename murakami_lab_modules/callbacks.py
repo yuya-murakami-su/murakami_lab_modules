@@ -59,11 +59,17 @@ class SavePredictionResults(Callback):
                     y_ = model_handler.data_fitting.data_handler.undo_normalize_y(y)
                     y_pred_ = model_handler.data_fitting.data_handler.undo_normalize_y(y_pred)
 
-                    evaluated = torch.hstack(
-                        [metric(y_, y_pred_) for metric in model_handler.data_fitting.save_prediction_metrics] +
-                        [metric(y, y_pred) for metric in model_handler.data_fitting.save_normalized_metrics]
-                    )
-                    prediction_results.append(torch.hstack([label, x_, y_, y_pred_, evaluated]))
+                    if (
+                            model_handler.data_fitting.save_prediction_metrics or
+                            model_handler.data_fitting.save_normalized_metrics
+                    ):
+                        evaluated = torch.hstack(
+                            [metric(y_, y_pred_) for metric in model_handler.data_fitting.save_prediction_metrics] +
+                            [metric(y, y_pred) for metric in model_handler.data_fitting.save_normalized_metrics]
+                        )
+                        prediction_results.append(torch.hstack([label, x_, y_, y_pred_, evaluated]))
+                    else:
+                        prediction_results.append(torch.hstack([label, x_, y_, y_pred_]))
             prediction_results = torch.vstack(prediction_results).cpu().numpy()
 
         columns = (

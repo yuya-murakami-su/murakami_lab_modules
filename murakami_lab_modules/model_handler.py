@@ -209,7 +209,6 @@ class ModelHandler:
         self.kwargs = kwargs
         self.callback_epoch = callback_epoch
         self.callbacks = callbacks or []
-        self._stop_training = False
 
         self._prepare_model_folder()
         self._validate_inputs()
@@ -325,12 +324,14 @@ class ModelHandler:
     def _run_callbacks(self, method: str):
         for cb in self.callbacks:
             fn = getattr(cb, method, None)
+            if fn is None:
+                raise ValueError(f'No {method} exists in {cb.__name__}. Callbacks must inherit Callback class.')
             if callable(fn):
                 fn(self)
 
     def __call__(self):
         self._run_callbacks('on_train_begin')
-        while not self._is_training_finished() and self._stop_training:
+        while not self._is_training_finished():
             self._run_callbacks('on_epoch_begin')
             train_losses = self._get_loss('train')
 
@@ -475,7 +476,7 @@ class ModelHandler:
                     [f'{name}: {value:.3e}' for name, value in zip(self.regularization.reg_names, valid_regs)]
                 )
                 print(f'\r[{utils.get_current_time()}] '
-                      f'{self.epoch: >5} {dt_str} | '
+                      f'{self.epoch + 1: >5} {dt_str} | '
                       f'Train {total_loss:.3e} ({train_data_loss:.3e} & {train_reg_loss:.3e}), '
                       f'Valid {valid_loss:.3e} ({valid_data_loss:.3e} & {valid_reg_loss:.3e}) | '
                       f'{valid_reg_str} | '
@@ -485,7 +486,7 @@ class ModelHandler:
             else:
                 total_loss, valid_loss = losses[1:3]
                 print(f'\r[{utils.get_current_time()}] '
-                      f'{self.epoch: >5} {dt_str} | '
+                      f'{self.epoch + 1: >5} {dt_str} | '
                       f'Train {total_loss:.3e}, Valid {valid_loss:.3e} | '
                       f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
                       f'lr {self.optimizer.current_lr():.2e}',
@@ -497,7 +498,7 @@ class ModelHandler:
                 [f'{name}: {value:.3e}' for name, value in zip(self.regularization.reg_names, regs)]
             )
             print(f'\r[{utils.get_current_time()}] '
-                  f'{self.epoch: >5} {dt_str} | '
+                  f'{self.epoch + 1: >5} {dt_str} | '
                   f'Reg {reg_loss:.3e} | {reg_str} | '
                   f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
                   f'lr {self.optimizer.current_lr():.2e}',
@@ -518,7 +519,6 @@ class ModelHandler:
         self._load_state_dicts()
         self._save_model()
         self._save_train_record()
-        self._optional_post_train_treatments()
 
     def _load_state_dicts(self, from_outside: bool = False, load_optimizer: bool = False):
         if from_outside:
