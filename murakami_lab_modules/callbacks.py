@@ -41,6 +41,7 @@ class SaveLossMonitor(Callback):
             legend_outside=True
         )
         plotter.save_fig(name=f'{model_handler.model_path}\\loss_monitor')
+        plotter.close()
 
 
 class SavePredictionResults(Callback):
@@ -149,6 +150,8 @@ class SaveParityPlot(Callback):
                 individual_plotter.remove_plots(reset_idx=False)
             total_plotter.add_details(legend_inside=True)
             total_plotter.save_fig(f'{model_handler.model_path}\\parity_plot\\parity_plot_y{y_idx}')
+            individual_plotter.close()
+            total_plotter.close()
 
 
 class LossMonitor(Callback):

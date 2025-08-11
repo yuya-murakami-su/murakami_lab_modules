@@ -78,9 +78,9 @@ class NNPredictor(AbstractPredictor):
                         output_np = True
                     else:
                         output_np = False
-                    nn_inputs = (x - self.normalizer['inputs_ave']) / self.normalizer['inputs_std']
+                    nn_inputs = (x - self.normalizer['input_ave']) / self.normalizer['input_std']
                     nn_outputs = self.nn(nn_inputs)
-                    outputs = nn_outputs * self.normalizer['outputs_std'] + self.normalizer['outputs_ave']
+                    outputs = nn_outputs * self.normalizer['output_std'] + self.normalizer['output_ave']
                     if output_np:
                         return outputs.cpu().numpy()
                     else:
