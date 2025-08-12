@@ -246,12 +246,7 @@ class ModelHandler:
             raise ValueError('At least of of train_epochs and early_stop must be give.')
 
     def _prepare_model_folder(self):
-        folder_idx = 0
-        while True:
-            n_folder = len(glob.glob(f'{self.save_path}\\{folder_idx + 1:0>5}*'))
-            if n_folder == 0:
-                break
-            folder_idx += 1
+        folder_idx = len(glob.glob(f'{self.save_path}\\*'))
         self.model_name = f'{folder_idx + 1:0>5}_{self.model_name}'
         self.model_path = f'{self.save_path}\\{self.model_name}'
         os.makedirs(f'{self.model_path}')
