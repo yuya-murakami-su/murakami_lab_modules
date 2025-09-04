@@ -50,22 +50,12 @@ class DataFitting:
             self,
             data_handler: DataHandler,
             loss_criteria: callable = torch.nn.MSELoss(),
-            check_test: bool = True,
-            save_prediction_metrics: tuple = (),
-            save_normalized_metrics: tuple = ()
+            check_test: bool = True
     ):
         self.locals = utils.get_local_dict(locals())
         self.data_handler = data_handler
         self.loss_criteria = loss_criteria
         self.check_test = check_test
-        self.save_prediction_metrics = save_prediction_metrics
-        self.save_normalized_metrics = save_normalized_metrics
-
-        if type(save_prediction_metrics) is not tuple:
-            raise TypeError('save_prediction_metrics must be tuple of metric function.')
-
-        if type(save_normalized_metrics) is not tuple:
-            raise TypeError('save_normalized_metrics must be tuple of metric function.')
 
         if data_handler.n_data['test'] == 0 and self.check_test:
             utils.logging(f'[Warning] check_test was set to True while no test data available.')
@@ -120,7 +110,7 @@ class Regularization:
     def regularization(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
         raise NotImplementedError
 
-    def get_regularization_value(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
+    def get_regularization_value(self, nn: AbstractNeuralNetwork, data_handler: DataHandler = None):
         full_reg = self.reg_criteria(torch.stack(self.reg_func(data_handler=data_handler, nn=nn)))
 
         is_finite = torch.isfinite(full_reg)
@@ -378,7 +368,10 @@ class ModelHandler:
             loss = self.data_fitting.loss_criteria(y, y_nn)
             data_loss = loss.item()
 
-            reg_mean, reg_loss = self.regularization.get_regularization_value(self.data_fitting.data_handler, self.nn)
+            reg_mean, reg_loss = self.regularization.get_regularization_value(
+                nn=self.nn,
+                data_handler=self.data_fitting.data_handler
+            )
             if self.regularization.use_reg_prod:
                 loss.mul_(reg_loss)
             else:
@@ -394,7 +387,10 @@ class ModelHandler:
                 y_nn = self.nn(x=x)
                 data_loss = self.data_fitting.loss_criteria(y, y_nn).item()
 
-            reg_mean, reg_loss = self.regularization.get_regularization_value(self.data_fitting.data_handler, self.nn)
+            reg_mean, reg_loss = self.regularization.get_regularization_value(
+                nn=self.nn,
+                data_handler=self.data_fitting.data_handler
+            )
             reg_loss, reg_mean = reg_loss.item(), reg_mean.detach().cpu().numpy()
             if self.regularization.use_reg_prod:
                 loss = data_loss * reg_loss
@@ -420,7 +416,7 @@ class ModelHandler:
 
     def _reg_step(self):
         self.optimizer.zero_grad()
-        reg_mean, loss = self.regularization.get_regularization_value(self.data_fitting.data_handler, self.nn)
+        reg_mean, loss = self.regularization.get_regularization_value(nn=self.nn)
         loss.backward()
         self.optimizer.step(self.epoch)
         reg_loss, reg_mean = loss.item(), reg_mean.detach().cpu().numpy()
