@@ -116,11 +116,11 @@ class SavePredictionResults(Callback):
     def on_call(self, model_handler):
         if self.call_during_training:
             df = self.get_df(model_handler)
-            df.to_csv(f'{model_handler.model_path}\\prediction_results\\{model_handler.epoch:0>6}')
+            df.to_csv(f'{model_handler.model_path}\\prediction_results\\{model_handler.epoch:0>6}.csv')
 
     def on_train_end(self, model_handler):
         df = self.get_df(model_handler)
-        df.to_csv(f'{model_handler.model_path}\\prediction_results\\{model_handler.epoch:0>6}')
+        df.to_csv(f'{model_handler.model_path}\\prediction_results\\{model_handler.epoch:0>6}.csv')
 
 
 class SaveParityPlot(Callback):
