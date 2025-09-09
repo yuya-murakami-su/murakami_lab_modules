@@ -33,7 +33,8 @@ class AbstractNeuralNetwork(torch.nn.Module):
             n_output: int,
             n_layer: int,
             n_node: int,
-            activation: callable
+            activation: callable,
+            dropout: float = 0.0
     ) -> torch.nn.Sequential:
         if n_layer == 0:
             modules = [torch.nn.Linear(n_input, n_output)]
@@ -42,11 +43,15 @@ class AbstractNeuralNetwork(torch.nn.Module):
             modules = [torch.nn.Linear(n_input, n_node)]
             if activation is not None:
                 modules += [activation]
+            if dropout > 0.0:
+                modules += [torch.nn.Dropout(p=dropout)]
 
             for _ in range(n_layer - 1):
                 modules += [torch.nn.Linear(n_node, n_node)]
                 if activation is not None:
                     modules += [activation]
+                if dropout > 0.0:
+                    modules += [torch.nn.Dropout(p=dropout)]
 
             modules += [torch.nn.Linear(n_node, n_output)]
         return torch.nn.Sequential(*modules)
