@@ -17,7 +17,10 @@ class AbstractOptimizer:
         self.optimizer = None
 
     def set_parameters(self, parameters: Iterable):
-        self.optimizer = self.algorithm(parameters, lr=self.lr_function(0))
+        if 'optimizer_params' in self.kwargs.keys():
+            self.optimizer = self.algorithm(parameters, lr=self.lr_function(0), **self.kwargs['optimizer_params'])
+        else:
+            self.optimizer = self.algorithm(parameters, lr=self.lr_function(0))
 
     def get_lr_function(self) -> callable:
         raise NotImplementedError
