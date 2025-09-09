@@ -77,6 +77,7 @@ class SavePredictionResults(Callback):
         self.call_during_training = call_during_training
 
     def get_df(self, model_handler):
+        model_handler.nn.eval()
         with torch.no_grad():
             prediction_results = []
             for key in ['train', 'valid', 'test']:
@@ -134,6 +135,7 @@ class SaveParityPlot(Callback):
     def save_parity_plot(model_handler, folder: str):
         y_max = torch.full([1, model_handler.nn.n_output], -torch.inf)
         y_min = torch.full([1, model_handler.nn.n_output], torch.inf)
+        model_handler.nn.eval()
         with torch.no_grad():
             results = {}
             for key in ['train', 'valid', 'test']:
