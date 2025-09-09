@@ -50,13 +50,15 @@ class Optimizer(AbstractOptimizer):
     def __init__(
             self,
             algorithm: callable = torch.optim.Adam,
-            lr: float = 1e-3
+            lr: float = 1e-3,
+            **kwargs
     ):
         self.lr = lr
 
         super().__init__(
             algorithm=algorithm,
-            lr=lr
+            lr=lr,
+            **kwargs
         )
 
     def get_lr_function(self) -> callable:
@@ -72,6 +74,7 @@ class OptimizerWithWarmup(AbstractOptimizer):
             final_lr: float = 1e-3,
             log_scale: bool = True,
             algorithm: callable = torch.optim.Adam,
+            **kwargs
     ):
         self.init_lr = init_lr
         self.init_epoch = init_epoch
@@ -83,7 +86,8 @@ class OptimizerWithWarmup(AbstractOptimizer):
             init_lr=init_lr,
             init_epoch=init_epoch,
             final_lr=final_lr,
-            loc_scale=log_scale
+            loc_scale=log_scale,
+            **kwargs
         )
 
 
@@ -113,6 +117,7 @@ class OptimizerWithWarmupAndDecay(AbstractOptimizer):
             final_lr: float,
             log_scale: bool = True,
             algorithm: callable = torch.optim.Adam,
+            **kwargs
     ):
         self.init_lr = init_lr
         self.mid_epoch = mid_epoch
@@ -126,7 +131,8 @@ class OptimizerWithWarmupAndDecay(AbstractOptimizer):
             init_lr=init_lr,
             init_epoch=mid_epoch,
             final_lr=final_lr,
-            log_scale=log_scale
+            log_scale=log_scale,
+            **kwargs
         )
 
     def get_lr_function(self):
@@ -158,6 +164,7 @@ class OptimizerWithInverseDecay(AbstractOptimizer):
             half_epoch: int,
             final_lr: float = None,
             algorithm: callable = torch.optim.Adam,
+            **kwargs
     ):
         self.init_lr = init_lr
         self.half_epoch = half_epoch
@@ -167,7 +174,8 @@ class OptimizerWithInverseDecay(AbstractOptimizer):
             algorithm=algorithm,
             init_lr=init_lr,
             inverse_rate=half_epoch,
-            final_lr=final_lr
+            final_lr=final_lr,
+            **kwargs
         )
 
     def get_lr_function(self):
