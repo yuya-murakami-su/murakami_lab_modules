@@ -56,7 +56,7 @@ class DataHandler:
         self._send_to_device()
         self._normalize_data()
         self._get_default_dataset()
-        exec(f'self._{split_type}(**self.kwargs)')
+        getattr(self, f'_{split_type}')(**self.kwargs)
         self._update_datasets()
         self._get_data_loader()
 
