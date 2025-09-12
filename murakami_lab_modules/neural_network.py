@@ -34,7 +34,8 @@ class AbstractNeuralNetwork(torch.nn.Module):
             n_layer: int,
             n_node: int,
             activation: callable,
-            dropout: float = 0.0
+            dropout: float = 0.0,
+            **kwargs
     ) -> torch.nn.Sequential:
         if n_layer == 0:
             modules = [torch.nn.Linear(n_input, n_output)]
@@ -58,6 +59,10 @@ class AbstractNeuralNetwork(torch.nn.Module):
 
 
 class FeedForwardNeuralNetwork(AbstractNeuralNetwork):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.nn = self.get_neural_network_model(**kwargs)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.nn(x)
 

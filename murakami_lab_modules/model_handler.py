@@ -50,7 +50,7 @@ class DataFitting:
             self,
             data_handler: DataHandler,
             loss_criteria: callable = torch.nn.MSELoss(),
-            check_test: bool = True
+            check_test: bool = False
     ):
         self.locals = utils.get_local_dict(locals())
         self.data_handler = data_handler
@@ -484,7 +484,7 @@ class ModelHandler:
                       end='')
         else:
             reg_loss = losses[1]
-            regs = losses[self.regularization.n_reg + 7:]
+            regs = losses[1:]
             reg_str = ', '.join(
                 [f'{name}: {value:.3e}' for name, value in zip(self.regularization.reg_names, regs)]
             )
