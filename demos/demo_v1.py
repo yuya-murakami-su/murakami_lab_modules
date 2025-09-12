@@ -44,7 +44,7 @@ def main():
         batch_size=8,
         device_name='cpu',
         split_type='random_split',
-        split_ratio=(0.9, 0.1, 0.0)  # (# of training data, # of validation data, # of test data)
+        split_ratio=(0.9, 0.1, 0.0)  # (ratio of training data, ratio of validation data, ratio of test data)
     )
 
     # Define data fitting method during machine learning / データフィッティング手法の定義
