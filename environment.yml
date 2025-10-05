@@ -8,4 +8,5 @@ dependencies:
   - pandas
   - numpy
   - matplotlib~=3.10.0
+  - sklearn~=1.7.2
 prefix: C:\Users\YuyaMurakami\anaconda3\envs\git_env
