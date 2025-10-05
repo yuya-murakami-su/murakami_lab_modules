@@ -74,8 +74,6 @@ def conduct_pca(
                                  columns=[f'PC{i+1}' for i in range(pca.n_components_)])
         plt.figure()
         plt.scatter(scores_df['PC1'], scores_df['PC2'])
-        for i, txt in enumerate(scores_df.index):
-            plt.annotate(txt, (scores_df['PC1'][i], scores_df['PC2'][i]), fontsize=8, alpha=0.7)
         plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)")
         plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)")
         plt.title('PC1 vs PC2 Scatter Plot')
@@ -103,3 +101,5 @@ def conduct_pca(
         print("✅ バイプロット（biplot.png）を保存しました。")
 
     return pca
+
+conduct_pca(data_path='Park.csv', save_path='PCA results')
