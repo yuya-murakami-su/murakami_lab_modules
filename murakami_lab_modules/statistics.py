@@ -19,7 +19,6 @@ def conduct_pca(
 ):
 
     df = pd.read_csv(data_path, index_col=0)
-    print(f"読み込んだデータの形状: {df.shape}")
     scaler = StandardScaler()
     scaled_data = scaler.fit_transform(df)
     pca = PCA(n_components=n_components)
@@ -31,14 +30,12 @@ def conduct_pca(
                               index=df.index,
                               columns=[f'PC{i+1}' for i in range(pca.n_components_)])
         scores.to_csv(os.path.join(save_path, 'pca_scores.csv'))
-        print("✅ 主成分得点（scores.csv）を保存しました。")
 
     if save_loadings:
         loadings = pd.DataFrame(pca.components_.T,
                                 index=df.columns,
                                 columns=[f'PC{i+1}' for i in range(pca.n_components_)])
         loadings.to_csv(os.path.join(save_path, 'pca_loadings.csv'))
-        print("✅ 主成分負荷量（loadings.csv）を保存しました。")
 
     if save_explained_variance:
         explained = pd.DataFrame({
@@ -46,12 +43,10 @@ def conduct_pca(
             'CumulativeVarianceRatio': np.cumsum(pca.explained_variance_ratio_)
         }, index=[f'PC{i+1}' for i in range(pca.n_components_)])
         explained.to_csv(os.path.join(save_path, 'pca_explained_variance.csv'))
-        print("✅ 寄与率（explained_variance.csv）を保存しました。")
 
     if save_scaling_params:
         scaling_df = pd.DataFrame({'Mean': scaler.mean_, 'Std': np.sqrt(scaler.var_)}, index=df.columns)
         scaling_df.to_csv(os.path.join(save_path, 'scaling_params.csv'))
-        print("✅ 標準化パラメータ（scaling_params.csv）を保存しました。")
 
     if save_scree_plot:
         plt.figure()
@@ -66,7 +61,6 @@ def conduct_pca(
         plt.tight_layout()
         plt.savefig(os.path.join(save_path, 'scree_plot.png'), dpi=300)
         plt.close()
-        print("✅ スクリープロット（scree_plot.png）を保存しました。")
 
     if save_pc_scatter:
         scores_df = pd.DataFrame(pca.transform(scaled_data),
@@ -80,7 +74,6 @@ def conduct_pca(
         plt.tight_layout()
         plt.savefig(os.path.join(save_path, 'pc1_pc2_scatter.png'), dpi=300)
         plt.close()
-        print("✅ PC1 vs PC2 散布図（pc1_pc2_scatter.png）を保存しました。")
 
     if save_biplot and pca.n_components_ >= 2:
         scores_2d = pca.transform(scaled_data)[:, :2]
@@ -98,7 +91,6 @@ def conduct_pca(
         plt.tight_layout()
         plt.savefig(os.path.join(save_path, 'biplot.png'), dpi=300)
         plt.close()
-        print("✅ バイプロット（biplot.png）を保存しました。")
 
     return pca
 
