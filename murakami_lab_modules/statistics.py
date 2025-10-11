@@ -94,4 +94,4 @@ def conduct_pca(
 
     return pca
 
-conduct_pca(data_path='Park.csv', save_path='PCA results')
+conduct_pca(data_path='PCA results (Park)\\Park.csv', save_path='PCA results (Park)')
