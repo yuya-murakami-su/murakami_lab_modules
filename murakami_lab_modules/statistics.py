@@ -93,5 +93,3 @@ def conduct_pca(
         plt.close()
 
     return pca
-
-conduct_pca(data_path='PCA results (Park)\\Park.csv', save_path='PCA results (Park)')
