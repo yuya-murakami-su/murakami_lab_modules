@@ -155,7 +155,7 @@ class SaveParityPlot(Callback):
                 results[key] = [torch.vstack(y_list), torch.vstack(y_pred_list)]
 
         for y_idx in range(model_handler.nn.n_output):
-            y_max_, y_min_ = y_max[0, y_idx], y_min[0, y_idx]
+            y_max_, y_min_ = y_max[0, y_idx].cpu(), y_min[0, y_idx].cpu()
             dy = (y_max_ - y_min_) * 0.1
             total_plotter = Plotter(
                 window_name='',
