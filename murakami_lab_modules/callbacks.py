@@ -133,8 +133,8 @@ class SaveParityPlot(Callback):
 
     @staticmethod
     def save_parity_plot(model_handler, folder: str):
-        y_max = torch.full([1, model_handler.nn.n_output], -torch.inf)
-        y_min = torch.full([1, model_handler.nn.n_output], torch.inf)
+        y_max = torch.full([1, model_handler.nn.n_output], -torch.inf).to(model_handler.device)
+        y_min = torch.full([1, model_handler.nn.n_output], torch.inf).to(model_handler.device)
         model_handler.nn.eval()
         with torch.no_grad():
             results = {}
