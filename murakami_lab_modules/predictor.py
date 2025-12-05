@@ -122,9 +122,8 @@ class NNPredictor(AbstractPredictor):
         if self.load_normalizer:
             if not os.path.exists(f'{self.model_path}\\normalizer.pth'):
                 raise ValueError('Normalizer is not found. Please set to load_normalizer = False.')
-            self.normalizer = torch.load(f'{self.model_path}\\normalizer.pth', weights_only=False, map_location='cpu')
-            for key in self.normalizer.keys():
-                self.normalizer[key].to(self.device)
+            self.normalizer = torch.load(f'{self.model_path}\\normalizer.pth', weights_only=False,
+                                         map_location=self.device_name)
         else:
             self.normalizer = None
 
