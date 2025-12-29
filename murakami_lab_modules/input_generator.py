@@ -35,7 +35,7 @@ class InputGenerator:
                 raise ValueError('length of inputs must be same as size_of_generated_inputs')
             self.generator = self._fixed_distribution(inputs=kwargs['inputs'])
         else:
-            exec(f'self.generator = self._{distribution}(**kwargs)')
+            self.generator = getattr(self, f'_{distribution}')(**kwargs)
 
     def _random_distribution(self, input_range: tuple = None, **_: dict):
         if input_range is None:
