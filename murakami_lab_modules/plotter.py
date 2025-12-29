@@ -387,6 +387,9 @@ class Plotter:
         self.canvas.draw()
         self.root.update()
 
+    def set_aspect(self, aspect: str, adjustable: str = None, anchor=None, share=False):
+        self.ax.set_aspect(aspect, adjustable=adjustable, anchor=anchor, share=share)
+
     def save_fig(self, name: str):
         self.fig.savefig(f'{name}.png', transparent=False)
 
