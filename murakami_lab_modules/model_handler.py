@@ -26,10 +26,12 @@ def get_relative_error(epsilon: float = 1e-10, as_loss_function: bool = False):
 def get_mean_squared_error(as_loss_function: bool = False):
     if as_loss_function:
         mse_func = torch.nn.MSELoss()
+
         def mse(y_true: torch.Tensor, y_calc: torch.Tensor):
             return mse_func(y_true, y_calc).mean()
     else:
         mse_func = torch.nn.MSELoss(reduction='none')
+
         def mse(y_true: torch.Tensor, y_calc: torch.Tensor):
             return mse_func(y_true, y_calc).mean(dim=1, keepdim=True)
     return mse
@@ -262,9 +264,9 @@ class ModelHandler:
             self._load_state_dicts(from_outside=True, load_optimizer=self.load_optimizer)
 
     def _prepare_train_record(self):
-        self.train_record_columns = ['Time', 'Epoch', 'Best', 'Test']
-        if os.path.exists(self.train_record_path):
-            self.train_record = pd.read_csv(self.train_record_path, index_col=None, encoding='cp932')
+        self.train_record_columns = ['Time', 'Epoch', 'Best loss', 'Test']
+        if os.path.exists(f'{self.train_record_path}.csv'):
+            self.train_record = pd.read_csv(f'{self.train_record_path}.csv', index_col=None, encoding='cp932')
         else:
             self.train_record = pd.DataFrame(
                 np.empty([0, len(self.train_record_columns)]),
@@ -304,7 +306,7 @@ class ModelHandler:
                     ['valid_' + r for r in self.regularization.reg_names]
             )
 
-        self.evolution = np.empty([self.train_epochs + 1, evolution_col_count])
+        self.evolution = np.empty([self.train_epochs, evolution_col_count])
 
     def _run_callbacks(self, method: str):
         for cb in self.callbacks:
@@ -533,13 +535,12 @@ class ModelHandler:
                 test_loss = self._get_loss('test')[0].item()
             utils.logging(f'Test {test_loss:.3e}')
         else:
-            test_loss = 0.0
+            test_loss = np.nan
 
-        train_record = [utils.get_current_time(), self.epoch, self.best_loss, test_loss]
-        self.train_record = pd.concat(
-            [self.train_record, pd.DataFrame([train_record], columns=self.train_record_columns)],
-            axis=0
-        )
+        train_record = [utils.get_current_time(), self.epoch - self.best_updated, self.best_loss, test_loss]
+        df = pd.DataFrame([train_record], columns=self.train_record_columns)
+        df.to_csv(f'{self.model_path}\\train_record.csv', index=False)
+        self.train_record = pd.concat([self.train_record, df], axis=0)
         self.train_record.to_csv(f'{self.train_record_path}.csv', index=False)
 
     def _get_state_dicts(self):
@@ -557,16 +558,16 @@ class ModelHandler:
                     def get_xy(evolution: np.ndarray, epoch: int):
                         x = evolution[:epoch, 0]
                         ys = [
-                                evolution[:epoch, 2],
-                                evolution[:epoch, self.regularization.n_reg + 4],
-                                evolution[:epoch, self.regularization.n_reg + 5],
-                                evolution[:epoch, self.regularization.n_reg + 6]
-                            ] + [
-                                evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
-                                range(self.regularization.n_reg)
-                            ]
+                                 evolution[:epoch, 2],
+                                 evolution[:epoch, self.regularization.n_reg + 4],
+                                 evolution[:epoch, self.regularization.n_reg + 5],
+                                 evolution[:epoch, self.regularization.n_reg + 6]
+                             ] + [
+                                 evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
+                                 range(self.regularization.n_reg)
+                             ]
                         labels = (['Train (data)', 'Valid (total)', 'Valid (data)', 'Valid (reg)'] +
-                                 self.regularization.reg_names)
+                                  self.regularization.reg_names)
                         return x, ys, labels
 
                 elif need_data:
@@ -575,9 +576,9 @@ class ModelHandler:
                     def get_xy(evolution: np.ndarray, epoch: int):
                         x = evolution[:epoch, 0]
                         ys = [
-                                evolution[:epoch, 2],
-                                evolution[:epoch, self.regularization.n_reg + 5]
-                            ]
+                            evolution[:epoch, 2],
+                            evolution[:epoch, self.regularization.n_reg + 5]
+                        ]
                         labels = ['Train (data)', 'Valid (data)']
                         return x, ys, labels
 
@@ -587,9 +588,9 @@ class ModelHandler:
                     def get_xy(evolution: np.ndarray, epoch: int):
                         x = evolution[:epoch, 0]
                         ys = [
-                                evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
-                                range(self.regularization.n_reg)
-                            ]
+                            evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
+                            range(self.regularization.n_reg)
+                        ]
                         labels = self.regularization.reg_names
                         return x, ys, labels
 
@@ -609,10 +610,10 @@ class ModelHandler:
             def get_xy(evolution: np.ndarray, epoch: int):
                 x = evolution[:epoch, 0]
                 ys = [
-                        evolution[:epoch, 1],
-                    ] + [
-                        evolution[:epoch, 2 + i] for i in range(self.regularization.n_reg)
-                    ]
+                         evolution[:epoch, 1],
+                     ] + [
+                         evolution[:epoch, 2 + i] for i in range(self.regularization.n_reg)
+                     ]
                 labels = ['Reg (all)'] + self.regularization.reg_names
                 return x, ys, labels
         return n_data, get_xy
