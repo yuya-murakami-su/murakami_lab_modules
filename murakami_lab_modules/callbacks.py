@@ -100,7 +100,7 @@ class SavePredictionResults(Callback):
                         ).cpu().numpy()
                         prediction_results.append(np.hstack([
                             label.cpu().numpy(),
-                            np.full(label.cpu().numpy(), key),
+                            np.full_like(label.cpu().numpy(), key),
                             x_.cpu().numpy(),
                             y_.cpu().numpy(),
                             y_pred_.cpu().numpy(),
@@ -109,7 +109,7 @@ class SavePredictionResults(Callback):
                     else:
                         prediction_results.append(np.hstack([
                             label.cpu().numpy(),
-                            np.full(label.cpu().numpy(), key),
+                            np.full_like(label.cpu().numpy(), key),
                             x_.cpu().numpy(),
                             y_.cpu().numpy(),
                             y_pred_.cpu().numpy()
