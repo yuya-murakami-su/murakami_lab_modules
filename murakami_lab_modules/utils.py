@@ -91,7 +91,7 @@ def load_txt(txt_name: str, default_value: dict = None):
                 elif type_str == 'str':
                     kwargs[key] = value
                 elif type_str == 'bool':
-                    kwargs[key] = bool(value)
+                    kwargs[key] = value == 'True'
                 elif type_str == 'array_like':
                     kwargs[key] = 'array_like'
                 else:
