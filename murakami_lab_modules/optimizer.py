@@ -86,7 +86,7 @@ class OptimizerWithWarmup(AbstractOptimizer):
             init_lr=init_lr,
             init_epoch=init_epoch,
             final_lr=final_lr,
-            loc_scale=log_scale,
+            log_scale=log_scale,
             **kwargs
         )
 
