@@ -5,6 +5,10 @@ import numpy as np
 from murakami_lab_modules.plotter import Plotter
 
 
+def relative_error(x_true: torch.Tensor, x_pred: torch.Tensor):
+    return torch.mean((x_true - x_pred).abs() / (x_true.abs() + 1e-10))
+
+
 class Callback:
     def on_train_begin(self, model_handler):
         pass
@@ -69,7 +73,7 @@ class SaveLossMonitor(Callback):
 class SavePredictionResults(Callback):
     def __init__(
             self,
-            prediction_metrics: tuple = (),
+            prediction_metrics: tuple = (torch.nn.MSELoss(), relative_error),
             normalized_metrics: tuple = (),
             call_during_training: bool = False
     ):
@@ -93,14 +97,27 @@ class SavePredictionResults(Callback):
                         evaluated = torch.hstack(
                             [metric(y_, y_pred_) for metric in self.prediction_metrics] +
                             [metric(y, y_pred) for metric in self.normalized_metrics]
-                        )
-                        prediction_results.append(torch.hstack([label, x_, y_, y_pred_, evaluated]))
+                        ).cpu().numpy()
+                        prediction_results.append(np.hstack([
+                            label.cpu().numpy(),
+                            np.full(label.cpu().numpy(), key),
+                            x_.cpu().numpy(),
+                            y_.cpu().numpy(),
+                            y_pred_.cpu().numpy(),
+                            evaluated
+                        ]))
                     else:
-                        prediction_results.append(torch.hstack([label, x_, y_, y_pred_]))
-            prediction_results = torch.vstack(prediction_results).cpu().numpy()
+                        prediction_results.append(np.hstack([
+                            label.cpu().numpy(),
+                            np.full(label.cpu().numpy(), key),
+                            x_.cpu().numpy(),
+                            y_.cpu().numpy(),
+                            y_pred_.cpu().numpy()
+                        ]))
+            prediction_results = np.vstack(prediction_results)
 
         columns = (
-                ['label'] +
+                ['label'] + ['key'] +
                 [f'x_{i}' for i in range(model_handler.nn.n_input)] +
                 [f'y_true_{i}' for i in range(model_handler.nn.n_output)] +
                 [f'y_pred_{i}' for i in range(model_handler.nn.n_output)] +
