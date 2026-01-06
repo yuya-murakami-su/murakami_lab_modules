@@ -6,11 +6,11 @@ from murakami_lab_modules.plotter import Plotter
 
 
 def mse_error(x_true: torch.Tensor, x_pred: torch.Tensor):
-    return torch.square(x_true - x_pred)
+    return torch.square(x_true - x_pred).mean(dim=1, keepdim=True)
 
 
 def relative_error(x_true: torch.Tensor, x_pred: torch.Tensor):
-    return (x_true - x_pred).abs() / (x_true.abs() + 1e-10)
+    return (x_true - x_pred).abs() / (x_true.abs() + 1e-10).mean(dim=1, keepdim=True)
 
 
 class Callback:
@@ -77,7 +77,7 @@ class SaveLossMonitor(Callback):
 class SavePredictionResults(Callback):
     def __init__(
             self,
-            prediction_metrics: tuple = (torch.nn.MSELoss(reduce=False), relative_error),
+            prediction_metrics: tuple = (mse_error, relative_error),
             normalized_metrics: tuple = (),
             call_during_training: bool = False
     ):
@@ -125,8 +125,8 @@ class SavePredictionResults(Callback):
                 [f'x_{i}' for i in range(model_handler.nn.n_input)] +
                 [f'y_true_{i}' for i in range(model_handler.nn.n_output)] +
                 [f'y_pred_{i}' for i in range(model_handler.nn.n_output)] +
-                [f'{metric.__class__.__name__}_pred' for metric in self.prediction_metrics] +
-                [f'{metric.__class__.__name__}_norm' for metric in self.normalized_metrics]
+                [f'{metric.__name__}_pred' for metric in self.prediction_metrics] +
+                [f'{metric.__name__}_norm' for metric in self.normalized_metrics]
         )
 
         return pd.DataFrame(prediction_results, columns=columns)
