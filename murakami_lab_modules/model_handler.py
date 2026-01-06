@@ -501,7 +501,7 @@ class ModelHandler:
         self.dt_epoch = time.perf_counter() - self.t_init
         if self.epoch == 0:
             self.t_init = time.perf_counter()
-        if self.callback_epoch is not None and (self.epoch + 1) % self.callback_epoch == 0:
+        if self.callback_epoch is not None and self.train_epochs > self.epoch > 0 == self.epoch % self.callback_epoch:
             self._run_callbacks('on_call')
 
     def _is_training_finished(self):
