@@ -121,8 +121,8 @@ class SavePredictionResults(Callback):
                 [f'x_{i}' for i in range(model_handler.nn.n_input)] +
                 [f'y_true_{i}' for i in range(model_handler.nn.n_output)] +
                 [f'y_pred_{i}' for i in range(model_handler.nn.n_output)] +
-                [f'{metric.__name__}_pred' for metric in self.prediction_metrics] +
-                [f'{metric.__name__}_norm' for metric in self.normalized_metrics]
+                [f'{metric.__class__.__name__}_pred' for metric in self.prediction_metrics] +
+                [f'{metric.__class__.__name__}_norm' for metric in self.normalized_metrics]
         )
 
         return pd.DataFrame(prediction_results, columns=columns)
