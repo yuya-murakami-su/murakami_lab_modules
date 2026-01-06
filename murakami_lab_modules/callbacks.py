@@ -5,8 +5,12 @@ import numpy as np
 from murakami_lab_modules.plotter import Plotter
 
 
+def mse_error(x_true: torch.Tensor, x_pred: torch.Tensor):
+    return torch.square(x_true - x_pred)
+
+
 def relative_error(x_true: torch.Tensor, x_pred: torch.Tensor):
-    return torch.mean((x_true - x_pred).abs() / (x_true.abs() + 1e-10))
+    return (x_true - x_pred).abs() / (x_true.abs() + 1e-10)
 
 
 class Callback:
@@ -73,7 +77,7 @@ class SaveLossMonitor(Callback):
 class SavePredictionResults(Callback):
     def __init__(
             self,
-            prediction_metrics: tuple = (torch.nn.MSELoss(), relative_error),
+            prediction_metrics: tuple = (torch.nn.MSELoss(reduce=False), relative_error),
             normalized_metrics: tuple = (),
             call_during_training: bool = False
     ):
