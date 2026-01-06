@@ -187,7 +187,7 @@ class Plotter:
             marker = self.shape_list[marker]
 
         if x_err is not None:
-            self.ax.errorbar(x, y, x_err=x_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
+            self.ax.errorbar(x, y, xerr=x_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
             self.z_order += 1
         if y_err is not None:
             self.ax.errorbar(x, y, yerr=y_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
