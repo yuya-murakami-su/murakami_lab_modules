@@ -1,6 +1,7 @@
 import os
 import torch
 import pandas as pd
+import numpy as np
 from murakami_lab_modules.plotter import Plotter
 
 
@@ -161,7 +162,12 @@ class SaveParityPlot(Callback):
                 window_name='',
                 n_data=3
             )
-            total_plotter.plot(x=[y_min_ - dy, y_max_ + dy], y=[y_min_ - dy, y_max_ + dy], color='k', line_width=2)
+            total_plotter.plot(
+                x=np.array([y_min_ - dy, y_max_ + dy]),
+                y=np.array([y_min_ - dy, y_max_ + dy]),
+                color='k',
+                line_width=2
+            )
             total_plotter.add_details(
                 title=f'Parity plot ({y_idx=})',
                 x_label=r'$y_{true}$',
@@ -184,10 +190,14 @@ class SaveParityPlot(Callback):
                     continue
                 total_plotter.scatter(x=results[key][0][:, y_idx], y=results[key][1][:, y_idx], label=key)
                 individual_plotter.plot(
-                    x=[y_min_ - dy, y_max_ + dy], y=[y_min_ - dy, y_max_ + dy], color='k', line_width=2
+                    x=np.array([y_min_ - dy, y_max_ + dy]),
+                    y=np.array([y_min_ - dy, y_max_ + dy]),
+                    color='k',
+                    line_width=2
                 )
+                mse = np.square(results[key][0][:, y_idx] - results[key][1][:, y_idx]).mean()
                 individual_plotter.scatter(x=results[key][0][:, y_idx], y=results[key][1][:, y_idx], label=key)
-                individual_plotter.add_details(title=f'Parity plot ({y_idx=}, {key})')
+                individual_plotter.add_details(title=f'Parity plot ({y_idx=}, {key}) | MSE = {mse:.3e}')
                 individual_plotter.save_fig(f'{folder}\\parity_plot_y{y_idx}_{key}')
                 individual_plotter.remove_plots(reset_idx=False)
             total_plotter.add_details(legend_inside=True)
