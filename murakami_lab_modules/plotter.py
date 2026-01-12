@@ -2,7 +2,6 @@ import tkinter as tk
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 
@@ -116,8 +115,8 @@ class Plotter:
 
     def plot(
             self,
-            x: np.ndarray | torch.Tensor,
-            y: np.ndarray | torch.Tensor,
+            x: np.ndarray,
+            y: np.ndarray,
             label: str = '',
             color: str | list = None,
             line_width: int = None,
@@ -127,10 +126,6 @@ class Plotter:
             change_style: bool = False,
             **kwargs
     ):
-        if type(x) is torch.Tensor:
-            x = x.detach().cpu().numpy()
-        if type(y) is torch.Tensor:
-            y = y.detach().cpu().numpy()
         if color is None:
             color = self._get_color(is_line=True)
         if line_style is None:
@@ -160,10 +155,10 @@ class Plotter:
 
     def scatter(
             self,
-            x: np.ndarray | torch.Tensor,
-            y: np.ndarray | torch.Tensor,
-            x_err: np.ndarray | torch.Tensor = None,
-            y_err: np.ndarray | torch.Tensor = None,
+            x: np.ndarray,
+            y: np.ndarray,
+            x_err: np.ndarray = None,
+            y_err: np.ndarray = None,
             label: str = '',
             color: str | list = None,
             marker: int | str = None,
@@ -173,10 +168,6 @@ class Plotter:
             change_shape: bool = False,
             **kwargs
     ):
-        if type(x) is torch.Tensor:
-            x = x.detach().cpu().numpy()
-        if type(y) is torch.Tensor:
-            y = y.detach().cpu().numpy()
         if color is None:
             color = self._get_color(is_line=False)
         if marker is None:
@@ -248,10 +239,10 @@ class Plotter:
 
     def plot_and_scatter(
             self,
-            x: np.ndarray | torch.Tensor,
-            y: np.ndarray | torch.Tensor,
-            x_err: np.ndarray | torch.Tensor = None,
-            y_err: np.ndarray | torch.Tensor = None,
+            x: np.ndarray,
+            y: np.ndarray,
+            x_err: np.ndarray = None,
+            y_err: np.ndarray = None,
             label: str = '',
             line_color: str | list = None,
             face_color: str | list = None,
@@ -264,10 +255,6 @@ class Plotter:
             change_shape: bool = False,
             **kwargs
     ):
-        if type(x) is torch.Tensor:
-            x = x.detach().cpu().numpy()
-        if type(y) is torch.Tensor:
-            y = y.detach().cpu().numpy()
         if line_color is None:
             line_color = self._get_color(is_line=True)
         if face_color is None:
