@@ -149,12 +149,13 @@ class SavePredictionResults(Callback):
 class SaveParityPlot(Callback):
     def __init__(
             self,
-            call_during_training: bool = False
+            call_during_training: bool = False,
+            fig_size: tuple = (8, 8)
     ):
         self.call_during_training = call_during_training
+        self.fig_size = fig_size
 
-    @staticmethod
-    def save_parity_plot(model_handler, folder: str):
+    def save_parity_plot(self,model_handler, folder: str):
         y_max = torch.full([1, model_handler.nn.n_output], -torch.inf).to(model_handler.device)
         y_min = torch.full([1, model_handler.nn.n_output], torch.inf).to(model_handler.device)
         model_handler.nn.eval()
@@ -181,7 +182,8 @@ class SaveParityPlot(Callback):
             dy = (y_max_ - y_min_) * 0.1
             total_plotter = Plotter(
                 window_name='',
-                n_data=3
+                n_data=3,
+                fig_size=self.fig_size
             )
             total_plotter.plot(
                 x=np.array([y_min_ - dy, y_max_ + dy]),
@@ -198,7 +200,8 @@ class SaveParityPlot(Callback):
             )
             individual_plotter = Plotter(
                 window_name='',
-                n_data=3
+                n_data=3,
+                fig_size=self.fig_size
             )
             individual_plotter.add_details(
                 x_label=r'$y_{true}$',
