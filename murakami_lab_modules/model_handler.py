@@ -341,8 +341,8 @@ class ModelHandler:
 
             self.epoch += 1
 
-        self._run_callbacks('on_train_end')
         self._post_train_treatments()
+        self._run_callbacks('on_train_end')
 
     def _get_loss(self, phase: str):
         if phase == 'train':
@@ -355,11 +355,16 @@ class ModelHandler:
                 losses = np.empty([self.data_fitting.data_handler.n_batch[phase], 3 + self.regularization.n_reg])
                 for i, (x, y, _) in enumerate(self.data_fitting.data_handler(phase)):
                     losses[i] = self._data_reg_step(x, y, phase=phase)
+                    losses[i, 0] *= len(x)
+                data_loss = losses[:, 0].sum(axis=0) / self.data_fitting.data_handler.n_data[phase]
+                loss_ave = losses.mean(axis=0)
+                loss_ave[0] = data_loss
+                return loss_ave
             else:
                 losses = np.empty([self.data_fitting.data_handler.n_batch[phase], 1])
                 for i, (x, y, _) in enumerate(self.data_fitting.data_handler(phase)):
-                    losses[i] = self._data_step(x, y, phase=phase)
-            return losses.mean(axis=0)
+                    losses[i] = self._data_step(x, y, phase=phase) * len(x)
+                return losses.sum(axis=0) / self.data_fitting.data_handler.n_data[phase]
         else:
             return self._reg_step()
 
