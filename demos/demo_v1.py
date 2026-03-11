@@ -12,11 +12,11 @@ from murakami_lab_modules.predictor import NNPredictor
 
 def main():
     # Define ground truth / 真の関数の定義
-    ground_truth = lambda x: 1 - np.exp(- (2 * x[:, 0] + 0.3 * (x[:, 1] + 1) ** 2.6)) - x[:, 0] / 10
+    ground_truth = lambda x: 1 - np.exp(- (2 * x[:, 0] / 25 + 0.3 * (x[:, 1] + 1) ** 2.6)) - x[:, 0] / 250
     x_ground_truth = [
-        np.stack([np.ones(1000) * 0.5, np.linspace(0, 20, 1000)]).T,
-        np.stack([np.ones(1000) * 1.0, np.linspace(0, 20, 1000)]).T,
-        np.stack([np.ones(1000) * 2.0, np.linspace(0, 20, 1000)]).T
+        np.stack([np.full(1000, 10), np.linspace(0, 20, 1000)]).T,
+        np.stack([np.full(1000, 25), np.linspace(0, 20, 1000)]).T,
+        np.stack([np.full(1000, 50), np.linspace(0, 20, 1000)]).T
     ]
     y_ground_truth = [ground_truth(x_ground_truth[i]) for i in range(3)]
 
@@ -24,9 +24,9 @@ def main():
     np.random.seed(2025)  # Fix random seed
     n_data = 15
     x_data = [
-        np.stack([np.ones(n_data) * 0.5, np.random.rand(n_data) * 5.0]).T,
-        np.stack([np.ones(n_data) * 1.0, np.random.rand(n_data) * 5.0]).T,
-        np.stack([np.ones(n_data) * 2.0, np.random.rand(n_data) * 5.0]).T
+        np.stack([np.full(n_data, 10), np.random.rand(n_data) * 5.0]).T,
+        np.stack([np.full(n_data, 25), np.random.rand(n_data) * 5.0]).T,
+        np.stack([np.full(n_data, 50), np.random.rand(n_data) * 5.0]).T
     ]
     noise_level = 0.01  # Add random noise
     y_data = [ground_truth(x_data[i]) * (1 + (np.random.rand(n_data) - 0.5) * noise_level) for i in range(3)]
@@ -92,21 +92,22 @@ def main():
     # Visualize result / 結果の可視化
     plotter = Plotter(n_data=3)
     plotter.plot(
-        x=x_ground_truth[0][:, 1], y=y_ground_truth[0], label=r'Truth $(y=0.5)$', alpha=0.2, line_width=10
+        x=x_ground_truth[0][:, 1], y=y_ground_truth[0], label=r'Truth $(T=10)$', alpha=0.2, line_width=10
     )
     plotter.plot(
-        x=x_ground_truth[1][:, 1], y=y_ground_truth[1], label=r'Truth $(y=1.0)$', alpha=0.2, line_width=10
+        x=x_ground_truth[1][:, 1], y=y_ground_truth[1], label=r'Truth $(T=25)$', alpha=0.2, line_width=10
     )
     plotter.plot(
-        x=x_ground_truth[2][:, 1], y=y_ground_truth[2], label=r'Truth $(y=2.0)$', alpha=0.2, line_width=10
+        x=x_ground_truth[2][:, 1], y=y_ground_truth[2], label=r'Truth $(T=50)$', alpha=0.2, line_width=10
     )
-    plotter.plot(x=x_ground_truth[0][:, 1], y=predictor(x_ground_truth[0]), label=r'NN $(y=0.5)$')
-    plotter.plot(x=x_ground_truth[1][:, 1], y=predictor(x_ground_truth[1]), label=r'NN $(y=1.0)$')
-    plotter.plot(x=x_ground_truth[2][:, 1], y=predictor(x_ground_truth[2]), label=r'NN $(y=2.0)$')
-    plotter.scatter(x=x_data[0][:, 1], y=y_data[0], label=r'Data $(y=0.5)$', marker_size=4)
-    plotter.scatter(x=x_data[1][:, 1], y=y_data[1], label=r'Data $(y=1.0)$', marker_size=4)
-    plotter.scatter(x=x_data[2][:, 1], y=y_data[2], label=r'Data $(y=2.0)$', marker_size=4)
-    plotter.add_details(x_label=r'$x$', y_label=r'$y$', x_lim=(0, 10), legend_outside=True)
+    plotter.plot(x=x_ground_truth[0][:, 1], y=predictor(x_ground_truth[0]), label=r'NN $(T=10)$')
+    plotter.plot(x=x_ground_truth[1][:, 1], y=predictor(x_ground_truth[1]), label=r'NN $(T=25)$')
+    plotter.plot(x=x_ground_truth[2][:, 1], y=predictor(x_ground_truth[2]), label=r'NN $(T=50)$')
+    plotter.scatter(x=x_data[0][:, 1], y=y_data[0], label=r'Data $(T=10)$', marker_size=4)
+    plotter.scatter(x=x_data[1][:, 1], y=y_data[1], label=r'Data $(T=25)$', marker_size=4)
+    plotter.scatter(x=x_data[2][:, 1], y=y_data[2], label=r'Data $(T=50)$', marker_size=4)
+    plotter.add_details(title='Demo v1', x_label=r'$x$', y_label=r'$y$', x_lim=(0, 10), legend_outside=True)
+    plotter.save_fig('demo_v1')
     plotter.display()
 
 
