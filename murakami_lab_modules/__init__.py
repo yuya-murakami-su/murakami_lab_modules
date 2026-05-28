@@ -22,7 +22,7 @@ matplotlib or other optional modules until they are actually needed.
 
 from importlib import import_module
 
-__version__ = '1.1.0'
+__version__ = '1.1.1'
 
 _SUBMODULES = {
     'data',
