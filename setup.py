@@ -11,9 +11,24 @@ setup(
     install_requires=[
         'numpy>=1.26.0',
         'pandas>=2.2.0',
-        'matplotlib>=3.9.0',
-        'sklearn>=1.7.2'
     ],
+    extras_require={
+        'torch': [
+            'torch>=2.0.0',
+        ],
+        'plot': [
+            'matplotlib>=3.9.0',
+        ],
+        'statistics': [
+            'matplotlib>=3.9.0',
+            'scikit-learn>=1.7.2',
+        ],
+        'all': [
+            'torch>=2.0.0',
+            'matplotlib>=3.9.0',
+            'scikit-learn>=1.7.2',
+        ],
+    },
     python_requires='>=3.11',
     author='Yuya Murakami',
     description='A simple library for machine learning',

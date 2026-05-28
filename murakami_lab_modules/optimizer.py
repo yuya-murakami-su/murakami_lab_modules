@@ -16,6 +16,12 @@ class AbstractOptimizer:
         self.lr_function = self.get_lr_function()
         self.optimizer = None
 
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'algorithm': self.algorithm,
+            **self.kwargs
+        })
+
     def set_parameters(self, parameters: Iterable):
         if 'optimizer_params' in self.kwargs.keys():
             self.optimizer = self.algorithm(parameters, lr=self.lr_function(0), **self.kwargs['optimizer_params'])

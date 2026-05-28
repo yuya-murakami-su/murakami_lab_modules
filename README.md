@@ -9,11 +9,45 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 pip install git+https://github.com/yuya-murakami-su/murakami_lab_modules.git
 ```
 
-##  Installing with GPU Support (CUDA 12.1)
+## PyTorch dependency
 
-**Important:**  
-This library **does not** automatically install PyTorch.  
-If you install PyTorch without specifying the CUDA version, you will get the **CPU-only** build.
+**Important:** PyTorch is required by the core modules, but this package does not install it by default.
+Install PyTorch first so you can choose the correct CPU or CUDA build for your environment.
+
+For example, install the PyTorch build recommended for your system from the official PyTorch installation guide,
+then install this package:
+
+```markdown
+pip install git+https://github.com/yuya-murakami-su/murakami_lab_modules.git
+```
+
+If you do not need a specific CPU/CUDA wheel, a convenience extra is available:
+
+```markdown
+pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[torch]"
+```
+
+This extra asks pip to install `torch`, but it does not guarantee a specific CPU or CUDA build.
+
+## Optional dependencies
+
+Plotting utilities:
+
+```markdown
+pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[plot]"
+```
+
+PCA/statistics utilities:
+
+```markdown
+pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[statistics]"
+```
+
+All optional dependencies:
+
+```markdown
+pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[all]"
+```
 
 ## Author
 ```markdown

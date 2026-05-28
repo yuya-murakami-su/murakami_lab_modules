@@ -28,6 +28,17 @@ class AbstractNeuralNetwork(torch.nn.Module):
 
         self.nn = None
 
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'n_input': self.n_input,
+            'n_output': self.n_output,
+            'n_layer': self.n_layer,
+            'n_node': self.n_node,
+            'activation': self.activation,
+            'random_seed': self.random_seed,
+            **self.kwargs
+        })
+
     @ staticmethod
     def get_neural_network_model(
             n_input: int,

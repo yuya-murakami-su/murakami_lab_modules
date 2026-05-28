@@ -403,32 +403,6 @@ def plot_histogram(
     save_path=None,
     show=True
 ):
-    """
-    matplotlib を用いた汎用ヒストグラム描画関数
-
-    Parameters
-    ----------
-    data : array-like
-        ヒストグラムを作成する1次元データ
-    bins : int or sequence, default=30
-        ビン数またはビン境界
-    range : tuple, optional
-        (min, max) の表示範囲
-    density : bool, default=False
-        Trueの場合、確率密度として正規化
-    title : str, optional
-        図のタイトル
-    xlabel : str, optional
-        x軸ラベル
-    ylabel : str, optional
-        y軸ラベル（未指定時は自動設定）
-    log : bool, default=False
-        Trueの場合、y軸を対数スケールにする
-    save_path : str, optional
-        指定したパスに図を保存（例: "hist.png"）
-    show : bool, default=True
-        Trueの場合、plt.show() を実行
-    """
 
     data = np.asarray(data)
 

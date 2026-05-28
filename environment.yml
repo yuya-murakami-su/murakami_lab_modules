@@ -7,6 +7,7 @@ dependencies:
   - pytorch
   - pandas
   - numpy
+  # Optional dependencies used by plotting/statistics utilities and demos.
   - matplotlib~=3.10.0
-  - sklearn~=1.7.2
+  - scikit-learn~=1.7.2
 prefix: C:\Users\YuyaMurakami\anaconda3\envs\git_env

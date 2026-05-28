@@ -119,7 +119,7 @@ class NNPredictor(AbstractPredictor):
     def __init__(
             self,
             model_path: str,
-            nn_class: type[AbstractNeuralNetwork],
+            nn_class: type[AbstractNeuralNetwork] = None,
             load_normalizer: bool = True,
             device_name: str = 'cpu',
     ):
@@ -169,17 +169,10 @@ class NNPredictor(AbstractPredictor):
         return nn_function
 
     def _prepare_nn(self):
-        nn_locals = utils.load_txt(f'{self.model_path}\\nn_params')
-        activation = getattr(torch.nn, nn_locals['activation'].replace('(', '').replace(')', ''))()
-
-        self.nn = self.nn_class(
-            n_input=nn_locals['n_input'],
-            n_output=nn_locals['n_output'],
-            n_layer=nn_locals['n_layer'],
-            n_node=nn_locals['n_node'],
-            activation=activation,
-            random_seed=nn_locals['random_seed']
-        )
+        config = utils.load_json(f'{self.model_path}\\config.json')
+        nn_config = config['nn']
+        nn_class = self.nn_class or utils.import_object(nn_config['class'])
+        self.nn = nn_class(**utils.deserialize_params(nn_config['params']))
 
     def _send_to_device(self):
         state_dicts = torch.load(f'{self.model_path}\\state_dicts.pth', weights_only=False, map_location='cpu')

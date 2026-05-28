@@ -3,7 +3,6 @@ import torch
 import pandas as pd
 import numpy as np
 from collections.abc import Callable
-from murakami_lab_modules.plotter import Plotter
 
 
 def mse_error(x_true: torch.Tensor, x_pred: torch.Tensor):
@@ -30,6 +29,17 @@ def _get_label_columns(data_handler) -> list[str]:
     if len(data_handler.label_idx) == 1:
         return [str(data_handler.label_idx[0])]
     return [str(label) for label in data_handler.label_idx]
+
+
+def _get_plotter_class():
+    try:
+        from murakami_lab_modules.plotter import Plotter
+    except ImportError as e:
+        raise ImportError(
+            'Plot callbacks require matplotlib. '
+            'Install it with `pip install murakami_lab_modules[plot]`.'
+        ) from e
+    return Plotter
 
 
 class Callback:
@@ -73,6 +83,7 @@ class SaveLossMonitor(Callback):
     def on_train_begin(self, model_handler):
         self.n_data, self.get_xy = model_handler.get_loss_info_fnc(need_data=self.need_data, need_reg=self.need_reg)
         os.makedirs(f'{model_handler.model_path}\\loss_evolution')
+        Plotter = _get_plotter_class()
         self.plotter = Plotter(
             window_name='',
             n_data=self.n_data
@@ -201,6 +212,7 @@ class SaveParityPlot(Callback):
                 results[key] = [torch.vstack(y_list), torch.vstack(y_pred_list)]
 
         for y_idx in range(model_handler.nn.n_output):
+            Plotter = _get_plotter_class()
             y_max_, y_min_ = y_max[0, y_idx].cpu(), y_min[0, y_idx].cpu()
             dy = (y_max_ - y_min_) * 0.1
             total_plotter = Plotter(
@@ -277,6 +289,7 @@ class LossMonitor(Callback):
 
     def on_train_begin(self, model_handler):
         self.n_data, self.get_xy = model_handler.get_loss_info_fnc(need_data=self.need_data, need_reg=self.need_reg)
+        Plotter = _get_plotter_class()
         self.plotter = Plotter(
             window_name='loss_monitor',
             n_data=self.n_data

@@ -37,6 +37,16 @@ class InputGenerator:
         else:
             self.generator = getattr(self, f'_{distribution}')(**kwargs)
 
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'size_of_generated_inputs': self.size_of_generated_inputs,
+            'device_name': self.device_name,
+            'shuffle': self.shuffle,
+            'distribution': self.distribution,
+            'random_seed': self.random_seed,
+            **self.kwargs
+        })
+
     def _random_distribution(self, input_range: tuple[tuple[float, float], ...] = None, **_: object):
         if input_range is None:
             raise ValueError('input_range must be given when random distribution is chosen.')

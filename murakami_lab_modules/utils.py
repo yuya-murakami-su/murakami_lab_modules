@@ -2,7 +2,10 @@ import random
 import torch
 import numpy as np
 import datetime
-import os
+import importlib
+import inspect
+import json
+from pathlib import Path
 
 
 def initialize_random_seed(seed: int) -> None:
@@ -12,11 +15,9 @@ def initialize_random_seed(seed: int) -> None:
 
 
 def get_local_dict(locals_: dict[str, object]) -> dict[str, object]:
-    local_dict: dict[str, object] = locals_
-    local_dict.pop('self')
-    if 'kwargs' in locals_.keys():
-        kwargs: dict[str, object] = locals_['kwargs']
-        local_dict.pop('kwargs')
+    local_dict = {key: value for key, value in locals_.items() if key != 'self'}
+    if 'kwargs' in local_dict.keys():
+        kwargs: dict[str, object] = local_dict.pop('kwargs')
         return local_dict | kwargs
     return local_dict
 
@@ -58,46 +59,150 @@ def get_device(device_name: str) -> torch.device:
     return device
 
 
-def save_txt(txt_name: str, **kwargs):
-    with open(f'{txt_name}.txt', 'w', encoding='utf-8_sig') as txt:
-        for key, value in kwargs.items():
-            if value is None:
-                continue
-            if callable(value):
-                if hasattr(value, '__name__'):
-                    txt.write(f'{key}\t{type(value).__name__}\t{value.__name__}\n')
-                elif hasattr(value, '__class__'):
-                    txt.write(f'{key}\t{type(value).__name__}\t{value.__class__.__name__}\n')
-                else:
-                    txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
-            else:
-                if '\t' in str(value) or '\n' in str(value):
-                    txt.write(f'{key}\tarray_like\t{type(value).__name__}\n')
-                else:
-                    txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
-        txt.close()
+def get_object_path(obj: object) -> str:
+    return f'{obj.__module__}.{obj.__qualname__}'
 
-def load_txt(txt_name: str, default_value: dict[str, object] = None) -> dict[str, object]:
-    kwargs = {}
-    if os.path.exists(f'{txt_name}.txt'):
-        with open(f'{txt_name}.txt', 'r', encoding='utf-8_sig') as txt:
-            lines = txt.readlines()
-            for line in lines:
-                key, type_str, value = line.strip().split('\t')
-                if type_str == 'int':
-                    kwargs[key] = int(value)
-                elif type_str == 'float':
-                    kwargs[key] = float(value)
-                elif type_str == 'str':
-                    kwargs[key] = value
-                elif type_str == 'bool':
-                    kwargs[key] = value == 'True'
-                elif type_str == 'array_like':
-                    kwargs[key] = 'array_like'
-                else:
-                    kwargs[key] = value
-        return kwargs
-    else:
-        if default_value is None:
-            raise ValueError
-        return default_value
+
+def import_object(target: str) -> object:
+    module_name, object_name = target.rsplit('.', 1)
+    obj = importlib.import_module(module_name)
+    for attr in object_name.split('.'):
+        obj = getattr(obj, attr)
+    return obj
+
+
+def _serialize_torch_module(module: torch.nn.Module) -> dict[str, object]:
+    params = {}
+    try:
+        signature = inspect.signature(module.__class__.__init__)
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature is not None:
+        for name, param in signature.parameters.items():
+            if name == 'self' or param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+                continue
+            if hasattr(module, name):
+                params[name] = serialize_config_value(getattr(module, name))
+
+    return {
+        '__type__': 'object',
+        'target': get_object_path(module.__class__),
+        'params': params
+    }
+
+
+def serialize_config_value(value: object) -> object:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.ndarray):
+        return {
+            '__type__': 'ndarray',
+            'dtype': str(value.dtype),
+            'data': value.tolist()
+        }
+    if isinstance(value, Path):
+        return {'__type__': 'path', 'value': str(value)}
+    if isinstance(value, torch.device):
+        return {'__type__': 'torch.device', 'value': str(value)}
+    if isinstance(value, torch.dtype):
+        return {'__type__': 'torch.dtype', 'value': str(value).replace('torch.', '')}
+    if isinstance(value, torch.nn.Module):
+        return _serialize_torch_module(value)
+    if isinstance(value, tuple):
+        return {'__type__': 'tuple', 'items': [serialize_config_value(item) for item in value]}
+    if isinstance(value, list):
+        return [serialize_config_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): serialize_config_value(item)
+            for key, item in value.items()
+        }
+    if inspect.isclass(value) or inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
+        return {'__type__': 'reference', 'target': get_object_path(value)}
+    if callable(value) and hasattr(value, '__class__'):
+        return _serialize_torch_module(value) if isinstance(value, torch.nn.Module) else {
+            '__type__': 'unserializable',
+            'target': get_object_path(value.__class__),
+            'repr': repr(value)
+        }
+    if torch.is_tensor(value):
+        return {
+            '__type__': 'tensor',
+            'shape': list(value.shape),
+            'dtype': str(value.dtype).replace('torch.', ''),
+            'device': str(value.device),
+            'data': value.detach().cpu().tolist()
+        }
+    return {
+        '__type__': 'unserializable',
+        'target': get_object_path(value.__class__),
+        'repr': repr(value)
+    }
+
+
+def deserialize_config_value(value: object) -> object:
+    if isinstance(value, list):
+        return [deserialize_config_value(item) for item in value]
+    if not isinstance(value, dict) or '__type__' not in value:
+        if isinstance(value, dict):
+            return {key: deserialize_config_value(item) for key, item in value.items()}
+        return value
+
+    value_type = value['__type__']
+    if value_type == 'tuple':
+        return tuple(deserialize_config_value(item) for item in value['items'])
+    if value_type == 'path':
+        return Path(value['value'])
+    if value_type == 'torch.device':
+        return torch.device(value['value'])
+    if value_type == 'torch.dtype':
+        return getattr(torch, value['value'])
+    if value_type == 'ndarray':
+        return np.asarray(value['data'], dtype=value['dtype'])
+    if value_type == 'tensor':
+        return torch.tensor(value['data'], dtype=getattr(torch, value['dtype']))
+    if value_type == 'reference':
+        return import_object(value['target'])
+    if value_type == 'object':
+        cls = import_object(value['target'])
+        params = {
+            key: deserialize_config_value(item)
+            for key, item in value.get('params', {}).items()
+        }
+        return cls(**params)
+    if value_type == 'unserializable':
+        return value.get('repr')
+    raise TypeError(f'Cannot deserialize config value of type {value_type}.')
+
+
+def make_object_config(obj: object, params: dict[str, object]) -> dict[str, object]:
+    return {
+        'class': get_object_path(obj.__class__),
+        'params': serialize_config_value(params)
+    }
+
+
+def deserialize_params(params: dict[str, object]) -> dict[str, object]:
+    return {
+        key: deserialize_config_value(value)
+        for key, value in params.items()
+    }
+
+
+def save_json(path: str | Path, data: dict[str, object]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_json(path: str | Path) -> dict[str, object]:
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)

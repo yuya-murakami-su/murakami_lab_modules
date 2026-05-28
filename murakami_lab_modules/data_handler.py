@@ -74,6 +74,27 @@ class DataHandler:
         self._update_datasets()
         self._get_data_loader()
 
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'input_data_path': self.input_data_path,
+            'input_idx': self.input_idx,
+            'output_idx': self.output_idx,
+            'batch_size': self.batch_size,
+            'device_name': self.device_name,
+            'label_data_path': self.label_data_path,
+            'label_idx': self.label_idx,
+            'output_data_path': self.output_data_path,
+            'unnormalized_input_idx': self.unnormalized_input_idx,
+            'unnormalized_output_idx': self.unnormalized_output_idx,
+            'split_type': self.split_type,
+            'is_validation_data_batched': self.is_validation_data_batched,
+            'use_train_as_valid': self.use_train_as_valid,
+            'classic_normalizer': self.classic_normalizer,
+            'random_seed': self.random_seed,
+            'csv_encoding': self.csv_encoding,
+            **self.kwargs
+        })
+
     def _load_datafiles(self):
         self.inputs = self._load_datafile(self.input_data_path, self.input_idx, self.csv_encoding)
         self.outputs = self._load_datafile(self.output_data_path, self.output_idx, self.csv_encoding)

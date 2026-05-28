@@ -1,9 +1,20 @@
 import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+
+
+def _load_statistics_dependencies():
+    try:
+        import matplotlib.pyplot as plt
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.decomposition import PCA
+    except ImportError as e:
+        raise ImportError(
+            'conduct_pca requires matplotlib and scikit-learn. '
+            'Install them with `pip install murakami_lab_modules[statistics]`.'
+        ) from e
+    return plt, StandardScaler, PCA
+
 
 def conduct_pca(
     data_path: str,
@@ -17,6 +28,7 @@ def conduct_pca(
     save_biplot: bool = True,
     save_pc_scatter: bool = True
 ):
+    plt, StandardScaler, PCA = _load_statistics_dependencies()
 
     df = pd.read_csv(data_path, index_col=0)
     scaler = StandardScaler()

@@ -1,16 +1,15 @@
 import time
-import glob
 import os
 import pandas as pd
 import numpy as np
 import torch
 import copy
+from datetime import datetime
 from collections.abc import Callable
 from .neural_network import AbstractNeuralNetwork
 from .data_handler import DataHandler
 from .input_generator import InputGenerator
 from .optimizer import AbstractOptimizer
-from .plotter import Plotter
 from . import utils
 
 
@@ -64,6 +63,12 @@ class DataFitting:
             utils.logging(f'[Warning] check_test was set to True while no test data available.')
             self.check_test = False
 
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'loss_criteria': self.loss_criteria,
+            'check_test': self.check_test
+        })
+
 
 class Regularization:
     _different_n_points_warned = False
@@ -85,6 +90,7 @@ class Regularization:
         self.reg_names = reg_names
         self.reg_criteria = reg_criteria
         self.use_reg_prod = use_reg_prod
+        self.reg_min_value = reg_min
         self.reg_min = reg_min
 
         self.n_generator = len(input_generators)
@@ -111,6 +117,17 @@ class Regularization:
             self.reg_min = torch.zeros([self.n_reg], device=self.device, dtype=torch.float32)
         else:
             self.reg_min = torch.full([self.n_reg], reg_min, device=self.device, dtype=torch.float32)
+
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'input_generators': [input_generator.config_dict() for input_generator in self.input_generators],
+            'reg_weights': self.reg_weights.detach().cpu().tolist(),
+            'reg_func_name': self.reg_func_name,
+            'reg_names': self.reg_names,
+            'reg_criteria': self.reg_criteria,
+            'use_reg_prod': self.use_reg_prod,
+            'reg_min': self.reg_min_value
+        })
 
     def regularization(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
         raise NotImplementedError
@@ -487,6 +504,22 @@ class ModelHandler:
         self._prepare_train_record()
         self._prepare_train_valuables()
 
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'train_epochs': self.train_epochs,
+            'early_stop': self.early_stop,
+            'load_model': self.load_model,
+            'load_optimizer': self.load_optimizer,
+            'save_path': self.save_path,
+            'train_record_path': self.train_record_path,
+            'recalculate_valid_loss': self.recalculate_valid_loss,
+            'model_name': self.model_name,
+            'callback_epoch': self.callback_epoch,
+            'callbacks': self.callbacks,
+            'random_seed': self.random_seed,
+            **self.kwargs
+        })
+
     def _validate_inputs(self):
         if self.data_fitting is None and self.regularization is None:
             raise ValueError('At least one of data_handler_ or input_generators must be given.')
@@ -509,30 +542,54 @@ class ModelHandler:
                                  f'data_fitting: {self.data_fitting.data_handler.device}, '
                                  f'regularization: {self.regularization.device}')
 
-        if self.model_name is None:
-            self.model_name = utils.get_current_time(for_file_name=True)
-
         if (self.train_epochs is None or self.train_epochs == 0) and self.early_stop == 0:
             raise ValueError('At least of of train_epochs and early_stop must be give.')
 
+    @staticmethod
+    def _get_model_folder_timestamp() -> str:
+        now = datetime.now()
+        return f'{now:%y%m%d-%H%M%S}-{now.microsecond // 1000:03d}'
+
     def _prepare_model_folder(self):
-        folder_idx = len(glob.glob(f'{self.save_path}\\*'))
-        self.model_name = f'{folder_idx + 1:0>5}_{self.model_name}'
-        self.model_path = f'{self.save_path}\\{self.model_name}'
-        os.makedirs(f'{self.model_path}')
+        base_model_name = self.model_name
+        for _ in range(1000):
+            timestamp = self._get_model_folder_timestamp()
+            if base_model_name is None:
+                self.model_name = timestamp
+            else:
+                self.model_name = f'{timestamp}_{base_model_name}'
+            self.model_path = os.path.join(self.save_path, self.model_name)
+            try:
+                os.makedirs(self.model_path, exist_ok=False)
+                return
+            except FileExistsError:
+                time.sleep(0.001)
+        raise RuntimeError(f'Failed to create a unique model folder under {self.save_path}.')
 
     def _save_model_info(self):
-        utils.save_txt(f'{self.model_path}\\nn_params', **self.nn.locals)
-        utils.save_txt(f'{self.model_path}\\optimizer_params', **self.optimizer.locals)
-        utils.save_txt(f'{self.model_path}\\model_handler_params', **self.locals)
+        config = {
+            'format_version': 1,
+            'nn': self.nn.config_dict(),
+            'optimizer': self.optimizer.config_dict(),
+            'model_handler': self.config_dict(),
+            'data_fitting': self.data_fitting.config_dict() if self.has_data else None,
+            'data_handler': self.data_fitting.data_handler.config_dict() if self.has_data else None,
+            'regularization': self.regularization.config_dict() if self.has_reg else None
+        }
+        utils.save_json(f'{self.model_path}\\config.json', config)
+
+        metadata_path = f'{self.model_path}\\metadata'
+        utils.save_json(f'{metadata_path}\\nn.json', config['nn'])
+        utils.save_json(f'{metadata_path}\\optimizer.json', config['optimizer'])
+        utils.save_json(f'{metadata_path}\\model_handler.json', config['model_handler'])
         if self.has_data:
-            utils.save_txt(f'{self.model_path}\\data_fitting_params', **self.data_fitting.locals)
-            utils.save_txt(f'{self.model_path}\\data_handler_params', **self.data_fitting.data_handler.locals)
+            utils.save_json(f'{metadata_path}\\data_fitting.json', config['data_fitting'])
+            utils.save_json(f'{metadata_path}\\data_handler.json', config['data_handler'])
             torch.save(self.data_fitting.data_handler.normalizer_dict(), f'{self.model_path}\\normalizer.pth')
         if self.has_reg:
-            utils.save_txt(f'{self.model_path}\\regularization_params', **self.regularization.locals)
+            utils.save_json(f'{metadata_path}\\regularization.json', config['regularization'])
             for idx, input_generator_ in enumerate(self.regularization.input_generators):
-                utils.save_txt(f'{self.model_path}\\input_generator_{idx}_params', **input_generator_.locals)
+                utils.save_json(f'{metadata_path}\\input_generator_{idx}.json', input_generator_.config_dict())
 
     def _set_model(self):
         self.optimizer.set_parameters(self.nn.parameters())
