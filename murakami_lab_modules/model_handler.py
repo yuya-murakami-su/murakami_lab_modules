@@ -2,13 +2,12 @@ import time
 import pandas as pd
 import numpy as np
 import torch
-import copy
-from datetime import datetime
 from pathlib import Path
 from .neural_network import AbstractNeuralNetwork
 from .optimizer import OptimizerBase
 from .data_fitting import DataFitting as _DataFitting
 from .regularization import Regularization as _Regularization
+from .experiment import RunManager
 from . import utils
 
 __all__ = ['ModelHandler']
@@ -58,8 +57,9 @@ class ModelHandler:
         self.save_path = Path(save_path)
         self.train_record_path = Path(train_record_path)
         self.recalculate_valid_loss = recalculate_valid_loss
-        self.model_name = model_name
-        self.original_model_name = model_name
+        self.run_manager = RunManager(save_path=save_path, model_name=model_name)
+        self.model_name = self.run_manager.model_name
+        self.original_model_name = self.run_manager.original_model_name
         self.kwargs = kwargs
         self.callbacks = callbacks or []
         self.save_result = save_result
@@ -76,13 +76,14 @@ class ModelHandler:
 
         self._validate_inputs()
         if self.save_result:
-            self._prepare_model_folder()
-            self._save_model_info()
+            self.run_manager.prepare_model_folder()
+            self.model_name = self.run_manager.model_name
+            self.model_path = self.run_manager.model_path
+            self.run_manager.save_metadata(self)
         else:
             self.model_path = None
         self._prepare_callbacks()
         self._set_model()
-        self._prepare_train_record()
         self._prepare_train_valuables()
 
     def config_dict(self) -> dict[str, object]:
@@ -138,66 +139,47 @@ class ModelHandler:
             raise ValueError('history_every must be a positive int.')
 
     def _prepare_callbacks(self):
-        self.callbacks = list(self.callbacks)
-        if not self.save_result or not self.save_history or self.history_policy == 'none':
-            return
-        from .callbacks import HistoryLogger
-        self.callbacks.append(HistoryLogger(
-            path=self.model_path / 'evolution.csv',
-            every=None,
-            row_every=self.history_every if self.history_policy == 'sparse' else 1,
-            keep_best=self.keep_best_history,
-            keep_last=self.keep_last_history,
-        ))
+        from .callbacks import (
+            BestModelTracker,
+            ConsoleLogger,
+            FinalStateDictSaver,
+            HistoryLogger,
+            HistoryRecorder,
+            RegularizationReportSaver,
+            TrainRecordLogger,
+        )
 
-    @staticmethod
-    def _get_model_folder_timestamp() -> str:
-        now = datetime.now()
-        return f'{now:%y%m%d-%H%M%S}-{now.microsecond // 1000:03d}'
-
-    def _prepare_model_folder(self):
-        base_model_name = self.model_name
-        for _ in range(1000):
-            timestamp = self._get_model_folder_timestamp()
-            if base_model_name is None:
-                self.model_name = timestamp
-            else:
-                self.model_name = f'{timestamp}_{base_model_name}'
-            self.model_path = self.save_path / self.model_name
-            try:
-                self.model_path.mkdir(parents=True, exist_ok=False)
-                return
-            except FileExistsError:
-                time.sleep(0.001)
-        raise RuntimeError(f'Failed to create a unique model folder under {self.save_path}.')
-
-    def _save_model_info(self):
-        config = {
-            'format_version': 1,
-            'nn': self.nn.config_dict(),
-            'optimizer': self.optimizer.config_dict(),
-            'model_handler': self.config_dict(),
-            'data_fitting': self.data_fitting.config_dict() if self.has_data else None,
-            'data_handler': self.data_fitting.data_handler.config_dict() if self.has_data else None,
-            'regularization': self.regularization.config_dict() if self.has_reg else None
-        }
-        utils.save_json(self.model_path / 'config.json', config)
-
-        metadata_path = self.model_path / 'metadata'
-        utils.save_json(metadata_path / 'nn.json', config['nn'])
-        utils.save_json(metadata_path / 'optimizer.json', config['optimizer'])
-        utils.save_json(metadata_path / 'model_handler.json', config['model_handler'])
-        if self.has_data:
-            utils.save_json(metadata_path / 'data_fitting.json', config['data_fitting'])
-            utils.save_json(metadata_path / 'data_handler.json', config['data_handler'])
-            self.data_fitting.data_handler.save_summary(metadata_path / 'data_summary.json')
-            self.data_fitting.data_handler.save_summary(metadata_path / 'data_summary.csv')
+        user_callbacks = list(self.callbacks)
+        core_callbacks = [
+            BestModelTracker(restore_best=self.restore_best),
+            HistoryRecorder(
+                policy=self.history_policy,
+                every=self.history_every,
+                keep_best=self.keep_best_history,
+                keep_last=self.keep_last_history,
+            ),
+        ]
+        if self.verbose:
+            core_callbacks.append(ConsoleLogger())
+        if self.save_result:
+            if self.save_history and self.history_policy != 'none':
+                core_callbacks.append(HistoryLogger(
+                    path=self.model_path / 'evolution.csv',
+                    every=None,
+                    row_every=self.history_every if self.history_policy == 'sparse' else 1,
+                    keep_best=self.keep_best_history,
+                    keep_last=self.keep_last_history,
+                ))
             if self.save_model:
-                torch.save(self.data_fitting.data_handler.normalizer_dict(), self.model_path / 'normalizer.pth')
-        if self.has_reg:
-            utils.save_json(metadata_path / 'regularization.json', config['regularization'])
-            for idx, input_generator_ in enumerate(self.regularization.input_generators):
-                utils.save_json(metadata_path / f'input_generator_{idx}.json', input_generator_.config_dict())
+                core_callbacks.append(FinalStateDictSaver())
+            if self.has_reg:
+                core_callbacks.append(RegularizationReportSaver())
+            core_callbacks.append(TrainRecordLogger(
+                train_record_path=self.train_record_path,
+                show_test=self.verbose,
+            ))
+        self.callbacks = core_callbacks + user_callbacks
+        self.callbacks.sort(key=lambda callback: callback.priority)
 
     def _set_model(self):
         self.optimizer.set_parameters(self.nn.parameters())
@@ -205,26 +187,6 @@ class ModelHandler:
 
         if self.load_model is not None:
             self._load_state_dicts(from_outside=True, load_optimizer=self.load_optimizer)
-
-    def _prepare_train_record(self):
-        self.train_record_columns = ['Time', 'Epoch', 'Best loss', 'Test']
-        if not self.save_result:
-            self.train_record = pd.DataFrame(
-                np.empty([0, len(self.train_record_columns)]),
-                columns=self.train_record_columns
-            )
-        elif self._train_record_file().exists():
-            self.train_record = pd.read_csv(self._train_record_file(), index_col=None)
-        else:
-            self.train_record = pd.DataFrame(
-                np.empty([0, len(self.train_record_columns)]),
-                columns=self.train_record_columns
-            )
-
-    def _train_record_file(self) -> Path:
-        if self.train_record_path.suffix:
-            return self.train_record_path
-        return self.train_record_path.with_suffix('.csv')
 
     def _prepare_train_valuables(self):
         self.epoch = 0
@@ -236,6 +198,7 @@ class ModelHandler:
         self.stop_reason = None
         self.dt_epoch = None
         self.t_init = time.perf_counter()
+        self.train_record = None
 
         self.evolution_col = ['epoch']
 
@@ -260,8 +223,15 @@ class ModelHandler:
 
         self.evolution = []
         self.current_evolution = None
+        self.current_train_losses = None
+        self.current_valid_losses = None
 
-    def _run_callbacks(self, method: str):
+    def _should_run_callback(self, cb, method: str, interval: bool) -> bool:
+        if not interval:
+            return True
+        return cb.should_call(self)
+
+    def _run_callbacks(self, method: str, interval: bool = False):
         for cb in self.callbacks:
             fn = getattr(cb, method, None)
             if fn is None:
@@ -269,7 +239,7 @@ class ModelHandler:
                     f'No {method} exists in {cb.__class__.__name__}. '
                     f'Callbacks must inherit Callback class.'
                 )
-            if method == 'on_call' and hasattr(cb, 'should_call') and not cb.should_call(self):
+            if not self._should_run_callback(cb, method=method, interval=interval):
                 continue
             if callable(fn):
                 fn(self)
@@ -279,6 +249,8 @@ class ModelHandler:
         while not self._is_training_finished():
             self._run_callbacks('on_epoch_begin')
             train_losses = self._get_loss('train')
+            self.current_train_losses = train_losses
+            self._run_callbacks('on_train_step_end', interval=True)
 
             if self.data_fitting is not None:
                 if self.has_valid:
@@ -290,16 +262,15 @@ class ModelHandler:
                         valid_losses = train_losses
             else:
                 valid_losses = train_losses
+            self.current_valid_losses = valid_losses
+            self._run_callbacks('on_validation_end', interval=True)
 
-            self._update_best_loss(valid_losses)
             self._update_evolution(train_losses, valid_losses)
             self._finish_epoch()
-            self._display_epoch_results()
-            self._run_callbacks('on_epoch_end')
+            self._run_callbacks('on_epoch_end', interval=True)
 
             self.epoch += 1
 
-        self._post_train_treatments()
         self._run_callbacks('on_train_end')
 
     def request_stop(self, reason: str = None) -> None:
@@ -500,17 +471,6 @@ class ModelHandler:
             for name, value in zip(self.regularization.reg_names, reg_mean)
         }
 
-    def _update_best_loss(self, valid: dict[str, object]) -> None:
-        current_loss = valid['total']
-        if self.best_loss is None or self.best_loss > current_loss:
-            self.best_loss = current_loss
-            self.best_epoch = self.epoch
-            self.epochs_since_best = 0
-            if self.restore_best:
-                self.state_dicts = self._get_state_dicts()
-        else:
-            self.epochs_since_best += 1
-
     def _update_evolution(self, train: dict[str, object], valid: dict[str, object]) -> None:
         record = {'epoch': self.epoch}
         if self.has_data:
@@ -533,92 +493,11 @@ class ModelHandler:
             for name in self.regularization.reg_names:
                 record[name] = train['terms'][name]
         self.current_evolution = record
-        if self._should_keep_evolution_record(record):
-            self._store_evolution_record(record)
-
-    def _should_keep_evolution_record(self, record: dict[str, object]) -> bool:
-        if self.history_policy == 'none':
-            return False
-        if self.history_policy == 'full':
-            return True
-        if self.history_policy == 'last':
-            return True
-        epoch = record['epoch']
-        if epoch % self.history_every == 0:
-            return True
-        if self.keep_best_history and epoch == self.best_epoch:
-            return True
-        return False
-
-    def _store_evolution_record(self, record: dict[str, object]) -> None:
-        if self.history_policy == 'last':
-            self.evolution = [record]
-            return
-        if self.evolution and self.evolution[-1].get('epoch') == record.get('epoch'):
-            self.evolution[-1] = record
-            return
-        self.evolution.append(record)
-
-    def _ensure_last_evolution_record(self) -> None:
-        if self.current_evolution is None or not self.keep_last_history:
-            return
-        if self.history_policy == 'none':
-            return
-        self._store_evolution_record(self.current_evolution)
-
-    def _display_epoch_results(self):
-        if not self.verbose:
-            return
-
-        if self.epoch == 0:
-            dt = self.dt_epoch
-        else:
-            dt = self.dt_epoch / self.epoch
-        if dt < 1e-3:
-            dt_str = f'({dt * 1e6:.1f} us)'
-        elif dt < 1:
-            dt_str = f'({dt * 1000:.1f} ms)'
-        else:
-            dt_str = f'({dt:.1f} s)'
-
-        losses = self.current_evolution
-
-        if self.has_data:
-            if self.has_reg:
-                valid_reg_str = ', '.join(
-                    [f'{name}: {losses[f"valid_{name}"]:.3e}' for name in self.regularization.reg_names]
-                )
-                print(f'\r[{utils.get_current_time()}] '
-                      f'{self.epoch + 1: >5} {dt_str} | '
-                      f'Train {losses["train"]:.3e} ({losses["train_data"]:.3e} & {losses["train_reg"]:.3e}), '
-                      f'Valid {losses["valid"]:.3e} ({losses["valid_data"]:.3e} & {losses["valid_reg"]:.3e}) | '
-                      f'{valid_reg_str} | '
-                      f'Best {self.best_loss:.3e} (no change for {self.epochs_since_best: >4}) | '
-                      f'lr {self.optimizer.current_lr():.2e}',
-                      end='')
-            else:
-                print(f'\r[{utils.get_current_time()}] '
-                      f'{self.epoch + 1: >5} {dt_str} | '
-                      f'Train {losses["train"]:.3e}, Valid {losses["valid"]:.3e} | '
-                      f'Best {self.best_loss:.3e} (no change for {self.epochs_since_best: >4}) | '
-                      f'lr {self.optimizer.current_lr():.2e}',
-                      end='')
-        else:
-            reg_str = ', '.join(
-                [f'{name}: {losses[name]:.3e}' for name in self.regularization.reg_names]
-            )
-            print(f'\r[{utils.get_current_time()}] '
-                  f'{self.epoch + 1: >5} {dt_str} | '
-                  f'Reg {losses["reg_total"]:.3e} | {reg_str} | '
-                  f'Best {self.best_loss:.3e} (no change for {self.epochs_since_best: >4}) | '
-                  f'lr {self.optimizer.current_lr():.2e}',
-                  end='')
 
     def _finish_epoch(self):
         self.dt_epoch = time.perf_counter() - self.t_init
         if self.epoch == 0:
             self.t_init = time.perf_counter()
-        self._run_callbacks('on_call')
 
     def _is_training_finished(self):
         epoch_limit_reached = (
@@ -628,65 +507,14 @@ class ModelHandler:
         )
         return self.stop_training or epoch_limit_reached
 
-    def _post_train_treatments(self):
-        if self.verbose:
-            print('')
-            if self.stop_reason is not None:
-                print(f'Stopped early: {self.stop_reason}')
-        if self.restore_best and self.state_dicts is not None:
-            self._load_state_dicts()
-        self._ensure_last_evolution_record()
-        self._save_model()
-        self._save_train_record()
-
     def _load_state_dicts(self, from_outside: bool = False, load_optimizer: bool = False):
         if from_outside:
             state_dicts = torch.load(Path(self.load_model) / 'state_dicts.pth', weights_only=True)
         else:
-            state_dicts = copy.deepcopy(self.state_dicts)
+            state_dicts = self.state_dicts
         self.nn.load_state_dict(state_dicts['nn_state_dict'])
         if load_optimizer:
             self.optimizer.load_state_dict(state_dicts['optimizer_state_dict'])
-
-    def _save_model(self):
-        if not self.save_result:
-            return
-        if self.has_reg:
-            self.regularization.save_weight_report(self.model_path / 'regularization_weight_report.csv')
-        if self.save_model:
-            state_dicts = self.state_dicts if self.state_dicts is not None else self._get_state_dicts()
-            torch.save(state_dicts, self.model_path / 'state_dicts.pth')
-
-    def _save_train_record(self):
-        if self.has_data and self.data_fitting.check_test:
-            if self.has_reg:
-                test_loss = self._get_loss('test')['data']
-            else:
-                test_loss = self._get_loss('test')['total']
-            if self.verbose:
-                utils.logging(f'Test {test_loss:.3e}')
-        else:
-            test_loss = np.nan
-
-        if not self.save_result:
-            return
-
-        train_record = [
-            utils.get_current_time(),
-            None if self.best_epoch is None else self.best_epoch + 1,
-            self.best_loss,
-            test_loss,
-        ]
-        df = pd.DataFrame([train_record], columns=self.train_record_columns)
-        df.to_csv(self.model_path / 'train_record.csv', index=False)
-        self.train_record = pd.concat([self.train_record, df], axis=0)
-        self.train_record.to_csv(self._train_record_file(), index=False)
-
-    def _get_state_dicts(self):
-        return {
-            'nn_state_dict': copy.deepcopy(self.nn.state_dict()),
-            'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
-        }
 
     def get_loss_info_fnc(self, need_data: bool = True, need_reg: bool = True):
         def get_xy_from_keys(evolution: list[dict], keys: list[str], labels: list[str]):

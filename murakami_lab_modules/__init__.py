@@ -8,6 +8,7 @@ __all__ = [
     'dataset',
     'data_fitting',
     'differential',
+    'experiment',
     'input_generator',
     'losses',
     'model_handler',

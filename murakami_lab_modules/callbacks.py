@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+import copy
 import time
 
 import numpy as np
@@ -8,10 +9,14 @@ import torch
 
 __all__ = [
     'Callback',
+    'BestModelTracker',
     'CSVLogger',
     'CheckpointBest',
+    'ConsoleLogger',
     'EarlyStopping',
+    'FinalStateDictSaver',
     'GradientNormMonitor',
+    'HistoryRecorder',
     'HistoryLogger',
     'LambdaCallback',
     'LearningRateLogger',
@@ -23,6 +28,8 @@ __all__ = [
     'StateDictsSaver',
     'TargetLossReached',
     'TerminateOnNaN',
+    'TrainRecordLogger',
+    'RegularizationReportSaver',
     'mse_error',
     'relative_error',
 ]
@@ -105,10 +112,12 @@ def _is_improved(value: float, best_value: float | None, mode: str, min_delta: f
     return value > best_value + min_delta
 
 
-def _state_dicts(model_handler, save_optimizer: bool) -> dict[str, object]:
+def _state_dicts(model_handler, save_optimizer: bool, copy_state: bool = False) -> dict[str, object]:
     state_dicts = {'nn_state_dict': model_handler.nn.state_dict()}
     if save_optimizer:
         state_dicts['optimizer_state_dict'] = model_handler.optimizer.state_dict()
+    if copy_state:
+        state_dicts = copy.deepcopy(state_dicts)
     return state_dicts
 
 
@@ -133,12 +142,16 @@ class Callback:
     def __init__(
             self,
             every: int = None,
-            run_on_train_end: bool = True
+            run_on_train_end: bool = True,
+            priority: int = 100
     ):
         self.every = every
         self.run_on_train_end = run_on_train_end
+        self.priority = priority
         if every is not None and (type(every) is not int or every <= 0):
             raise ValueError('every must be a positive int or None.')
+        if type(priority) is not int:
+            raise ValueError('priority must be an int.')
 
     def should_call(self, model_handler) -> bool:
         if self.every is None:
@@ -151,7 +164,10 @@ class Callback:
     def on_epoch_begin(self, model_handler):
         pass
 
-    def on_call(self, model_handler):
+    def on_train_step_end(self, model_handler):
+        pass
+
+    def on_validation_end(self, model_handler):
         pass
 
     def on_epoch_end(self, model_handler):
@@ -169,8 +185,9 @@ class EarlyStopping(Callback):
             mode: str = 'min',
             min_delta: float = 0.0,
             every: int = 1,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=False)
+        super().__init__(every=every, run_on_train_end=False, priority=priority)
         if type(patience) is not int or patience < 0:
             raise ValueError('patience must be a non-negative int.')
         if mode not in {'min', 'max'}:
@@ -191,7 +208,7 @@ class EarlyStopping(Callback):
     def _current_value(self, model_handler) -> float:
         return _record_value(model_handler, self.monitor, self.__class__.__name__)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         value = self._current_value(model_handler)
         if self._is_improved(value):
             self.best_value = value
@@ -210,14 +227,15 @@ class TerminateOnNaN(Callback):
     def __init__(
             self,
             monitors: str | tuple[str, ...] | list[str] = None,
-            every: int = 1
+            every: int = 1,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=False)
+        super().__init__(every=every, run_on_train_end=False, priority=priority)
         if isinstance(monitors, str):
             monitors = (monitors,)
         self.monitors = None if monitors is None else tuple(monitors)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         record = _latest_evolution_record(model_handler, self.__class__.__name__)
         monitors = self.monitors or tuple(key for key in record if key != 'epoch')
         for monitor in monitors:
@@ -234,9 +252,10 @@ class MaxTime(Callback):
     def __init__(
             self,
             seconds: float,
-            every: int = 1
+            every: int = 1,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=False)
+        super().__init__(every=every, run_on_train_end=False, priority=priority)
         if seconds < 0:
             raise ValueError('seconds must be non-negative.')
         self.seconds = float(seconds)
@@ -245,7 +264,7 @@ class MaxTime(Callback):
     def on_train_begin(self, model_handler):
         self.start_time = time.perf_counter()
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         if time.perf_counter() - self.start_time >= self.seconds:
             model_handler.request_stop(f'MaxTime(seconds={self.seconds:g})')
 
@@ -256,16 +275,17 @@ class TargetLossReached(Callback):
             target: float,
             monitor: str = 'valid',
             mode: str = 'below',
-            every: int = 1
+            every: int = 1,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=False)
+        super().__init__(every=every, run_on_train_end=False, priority=priority)
         if mode not in {'below', 'above'}:
             raise ValueError("mode must be 'below' or 'above'.")
         self.target = float(target)
         self.monitor = monitor
         self.mode = mode
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         value = _record_value(model_handler, self.monitor, self.__class__.__name__)
         if self.mode == 'below':
             reached = value <= self.target
@@ -281,15 +301,16 @@ class LearningRateLogger(Callback):
     def __init__(
             self,
             column: str = 'lr',
-            every: int = 1
+            every: int = 1,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=False)
+        super().__init__(every=every, run_on_train_end=False, priority=priority)
         self.column = column
 
     def on_train_begin(self, model_handler):
         _ensure_evolution_column(model_handler, self.column)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         record = _latest_evolution_record(model_handler, self.__class__.__name__)
         record[self.column] = model_handler.optimizer.current_lr()
 
@@ -299,16 +320,17 @@ class GradientNormMonitor(Callback):
             self,
             column: str = 'grad_norm',
             norm_type: float = 2.0,
-            every: int = 1
+            every: int = 1,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=False)
+        super().__init__(every=every, run_on_train_end=False, priority=priority)
         self.column = column
         self.norm_type = norm_type
 
     def on_train_begin(self, model_handler):
         _ensure_evolution_column(model_handler, self.column)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         record = _latest_evolution_record(model_handler, self.__class__.__name__)
         grads = [p.grad.detach() for p in model_handler.nn.parameters() if p.grad is not None]
         if not grads:
@@ -331,8 +353,9 @@ class HistoryLogger(Callback):
             row_every: int = 1,
             keep_best: bool = True,
             keep_last: bool = True,
+            priority: int = 300,
     ):
-        super().__init__(every=every, run_on_train_end=True)
+        super().__init__(every=every, run_on_train_end=True, priority=priority)
         if row_every is not None and (type(row_every) is not int or row_every <= 0):
             raise ValueError('row_every must be a positive int or None.')
         self.path = None if path is None else Path(path)
@@ -386,7 +409,7 @@ class HistoryLogger(Callback):
             index=self.index
         )
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         self._save(model_handler)
 
     def on_train_end(self, model_handler):
@@ -406,9 +429,10 @@ class CheckpointBest(Callback):
             min_delta: float = 0.0,
             path: str | Path = None,
             save_optimizer: bool = True,
-            every: int = 1
+            every: int = 1,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=False)
+        super().__init__(every=every, run_on_train_end=False, priority=priority)
         if mode not in {'min', 'max'}:
             raise ValueError("mode must be 'min' or 'max'.")
         if min_delta < 0:
@@ -427,7 +451,7 @@ class CheckpointBest(Callback):
             self.path = model_path / 'best_state_dicts.pth'
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         value = _record_value(model_handler, self.monitor, self.__class__.__name__)
         if not _is_improved(value, self.best_value, self.mode, self.min_delta):
             return
@@ -441,16 +465,19 @@ class LambdaCallback(Callback):
             self,
             on_train_begin: Callable[[object], None] = None,
             on_epoch_begin: Callable[[object], None] = None,
-            on_call: Callable[[object], None] = None,
             on_epoch_end: Callable[[object], None] = None,
+            on_train_step_end: Callable[[object], None] = None,
+            on_validation_end: Callable[[object], None] = None,
             on_train_end: Callable[[object], None] = None,
             every: int = None,
             run_on_train_end: bool = True,
+            priority: int = 100,
     ):
-        super().__init__(every=every, run_on_train_end=run_on_train_end)
+        super().__init__(every=every, run_on_train_end=run_on_train_end, priority=priority)
         self._on_train_begin = on_train_begin
         self._on_epoch_begin = on_epoch_begin
-        self._on_call = on_call
+        self._on_train_step_end = on_train_step_end
+        self._on_validation_end = on_validation_end
         self._on_epoch_end = on_epoch_end
         self._on_train_end = on_train_end
 
@@ -462,9 +489,13 @@ class LambdaCallback(Callback):
         if self._on_epoch_begin is not None:
             self._on_epoch_begin(model_handler)
 
-    def on_call(self, model_handler):
-        if self._on_call is not None:
-            self._on_call(model_handler)
+    def on_train_step_end(self, model_handler):
+        if self._on_train_step_end is not None:
+            self._on_train_step_end(model_handler)
+
+    def on_validation_end(self, model_handler):
+        if self._on_validation_end is not None:
+            self._on_validation_end(model_handler)
 
     def on_epoch_end(self, model_handler):
         if self._on_epoch_end is not None:
@@ -473,6 +504,266 @@ class LambdaCallback(Callback):
     def on_train_end(self, model_handler):
         if self.run_on_train_end and self._on_train_end is not None:
             self._on_train_end(model_handler)
+
+
+class BestModelTracker(Callback):
+    def __init__(
+            self,
+            monitor: str = None,
+            mode: str = 'min',
+            min_delta: float = 0.0,
+            restore_best: bool = False,
+            save_optimizer: bool = True,
+            priority: int = 0,
+    ):
+        super().__init__(every=1, run_on_train_end=True, priority=priority)
+        if mode not in {'min', 'max'}:
+            raise ValueError("mode must be 'min' or 'max'.")
+        if min_delta < 0:
+            raise ValueError('min_delta must be non-negative.')
+        self.monitor = monitor
+        self.mode = mode
+        self.min_delta = min_delta
+        self.restore_best = restore_best
+        self.save_optimizer = save_optimizer
+        self.best_value = None
+        self.best_epoch = None
+        self.best_state_dicts = None
+
+    def _monitor(self, model_handler) -> str:
+        if self.monitor is not None:
+            return self.monitor
+        return 'valid' if model_handler.has_data else 'reg_total'
+
+    def on_train_begin(self, model_handler):
+        model_handler.best_loss = None
+        model_handler.best_epoch = None
+        model_handler.epochs_since_best = 0
+        model_handler.state_dicts = None
+
+    def on_epoch_end(self, model_handler):
+        monitor = self._monitor(model_handler)
+        value = _record_value(model_handler, monitor, self.__class__.__name__)
+        if _is_improved(value, self.best_value, self.mode, self.min_delta):
+            self.best_value = value
+            self.best_epoch = model_handler.epoch
+            model_handler.best_loss = value
+            model_handler.best_epoch = model_handler.epoch
+            model_handler.epochs_since_best = 0
+            if self.restore_best:
+                self.best_state_dicts = _state_dicts(
+                    model_handler,
+                    save_optimizer=self.save_optimizer,
+                    copy_state=True
+                )
+                model_handler.state_dicts = self.best_state_dicts
+            return
+
+        model_handler.epochs_since_best += 1
+
+    def on_train_end(self, model_handler):
+        if not self.run_on_train_end or not self.restore_best or self.best_state_dicts is None:
+            return
+        model_handler.nn.load_state_dict(self.best_state_dicts['nn_state_dict'])
+        if self.save_optimizer and 'optimizer_state_dict' in self.best_state_dicts:
+            model_handler.optimizer.load_state_dict(self.best_state_dicts['optimizer_state_dict'])
+
+
+class HistoryRecorder(Callback):
+    def __init__(
+            self,
+            policy: str = 'full',
+            every: int = 1,
+            keep_best: bool = True,
+            keep_last: bool = True,
+            priority: int = 10,
+    ):
+        super().__init__(every=1, run_on_train_end=True, priority=priority)
+        if policy not in {'full', 'sparse', 'last', 'none'}:
+            raise ValueError("policy must be one of 'full', 'sparse', 'last', or 'none'.")
+        if type(every) is not int or every <= 0:
+            raise ValueError('every must be a positive int.')
+        self.policy = policy
+        self.history_every = every
+        self.keep_best = keep_best
+        self.keep_last = keep_last
+
+    def _should_keep(self, model_handler, record: dict[str, object]) -> bool:
+        if self.policy == 'none':
+            return False
+        if self.policy in {'full', 'last'}:
+            return True
+        epoch = record['epoch']
+        if epoch % self.history_every == 0:
+            return True
+        if self.keep_best and epoch == getattr(model_handler, 'best_epoch', None):
+            return True
+        return False
+
+    def _store(self, model_handler, record: dict[str, object]) -> None:
+        if self.policy == 'last':
+            model_handler.evolution = [record]
+            return
+        if model_handler.evolution and model_handler.evolution[-1].get('epoch') == record.get('epoch'):
+            model_handler.evolution[-1] = record
+            return
+        model_handler.evolution.append(record)
+
+    def on_train_begin(self, model_handler):
+        model_handler.evolution = []
+        model_handler.current_evolution = None
+
+    def on_epoch_end(self, model_handler):
+        record = _latest_evolution_record(model_handler, self.__class__.__name__)
+        if self._should_keep(model_handler, record):
+            self._store(model_handler, record)
+
+    def on_train_end(self, model_handler):
+        if not self.run_on_train_end or not self.keep_last or self.policy == 'none':
+            return
+        current = getattr(model_handler, 'current_evolution', None)
+        if current is not None:
+            self._store(model_handler, current)
+
+
+class ConsoleLogger(Callback):
+    def __init__(self, every: int = 1, priority: int = 200):
+        super().__init__(every=every, run_on_train_end=True, priority=priority)
+
+    @staticmethod
+    def _time_string(model_handler) -> str:
+        if model_handler.epoch == 0:
+            dt = model_handler.dt_epoch
+        else:
+            dt = model_handler.dt_epoch / model_handler.epoch
+        if dt < 1e-3:
+            return f'({dt * 1e6:.1f} us)'
+        if dt < 1:
+            return f'({dt * 1000:.1f} ms)'
+        return f'({dt:.1f} s)'
+
+    def on_epoch_end(self, model_handler):
+        losses = _latest_evolution_record(model_handler, self.__class__.__name__)
+        dt_str = self._time_string(model_handler)
+        best_loss = getattr(model_handler, 'best_loss', np.nan)
+        epochs_since_best = getattr(model_handler, 'epochs_since_best', 0)
+
+        if model_handler.has_data:
+            if model_handler.has_reg:
+                valid_reg_str = ', '.join(
+                    [f'{name}: {losses[f"valid_{name}"]:.3e}' for name in model_handler.regularization.reg_names]
+                )
+                message = (
+                    f'\r[{pd.Timestamp.now():%H:%M:%S}] '
+                    f'{model_handler.epoch + 1: >5} {dt_str} | '
+                    f'Train {losses["train"]:.3e} ({losses["train_data"]:.3e} & {losses["train_reg"]:.3e}), '
+                    f'Valid {losses["valid"]:.3e} ({losses["valid_data"]:.3e} & {losses["valid_reg"]:.3e}) | '
+                    f'{valid_reg_str} | '
+                    f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
+                    f'lr {model_handler.optimizer.current_lr():.2e}'
+                )
+            else:
+                message = (
+                    f'\r[{pd.Timestamp.now():%H:%M:%S}] '
+                    f'{model_handler.epoch + 1: >5} {dt_str} | '
+                    f'Train {losses["train"]:.3e}, Valid {losses["valid"]:.3e} | '
+                    f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
+                    f'lr {model_handler.optimizer.current_lr():.2e}'
+                )
+        else:
+            reg_str = ', '.join(
+                [f'{name}: {losses[name]:.3e}' for name in model_handler.regularization.reg_names]
+            )
+            message = (
+                f'\r[{pd.Timestamp.now():%H:%M:%S}] '
+                f'{model_handler.epoch + 1: >5} {dt_str} | '
+                f'Reg {losses["reg_total"]:.3e} | {reg_str} | '
+                f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
+                f'lr {model_handler.optimizer.current_lr():.2e}'
+            )
+        print(message, end='')
+
+    def on_train_end(self, model_handler):
+        if self.run_on_train_end:
+            print('')
+            if getattr(model_handler, 'stop_reason', None) is not None:
+                print(f'Stopped early: {model_handler.stop_reason}')
+
+
+class FinalStateDictSaver(Callback):
+    def __init__(self, save_optimizer: bool = True, priority: int = 400):
+        super().__init__(every=None, run_on_train_end=True, priority=priority)
+        self.save_optimizer = save_optimizer
+
+    def on_train_end(self, model_handler):
+        if not self.run_on_train_end:
+            return
+        torch.save(
+            _state_dicts(model_handler, self.save_optimizer),
+            model_handler.model_path / 'state_dicts.pth'
+        )
+
+
+class RegularizationReportSaver(Callback):
+    def __init__(self, filename: str = 'regularization_weight_report.csv', priority: int = 410):
+        super().__init__(every=None, run_on_train_end=True, priority=priority)
+        self.filename = filename
+
+    def on_train_end(self, model_handler):
+        if self.run_on_train_end and model_handler.has_reg:
+            model_handler.regularization.save_weight_report(model_handler.model_path / self.filename)
+
+
+class TrainRecordLogger(Callback):
+    def __init__(
+            self,
+            train_record_path: str | Path = 'train_record',
+            show_test: bool = True,
+            priority: int = 500,
+    ):
+        super().__init__(every=None, run_on_train_end=True, priority=priority)
+        self.train_record_path = Path(train_record_path)
+        self.show_test = show_test
+        self.columns = ['Time', 'Epoch', 'Best loss', 'Test']
+        self.train_record = None
+
+    def _train_record_file(self) -> Path:
+        if self.train_record_path.suffix:
+            return self.train_record_path
+        return self.train_record_path.with_suffix('.csv')
+
+    def on_train_begin(self, model_handler):
+        if self._train_record_file().exists():
+            self.train_record = pd.read_csv(self._train_record_file(), index_col=None)
+        else:
+            self.train_record = pd.DataFrame(np.empty([0, len(self.columns)]), columns=self.columns)
+        model_handler.train_record = self.train_record
+
+    def _test_loss(self, model_handler) -> float:
+        if not (model_handler.has_data and model_handler.data_fitting.check_test):
+            return np.nan
+        if model_handler.has_reg:
+            return model_handler._get_loss('test')['data']
+        return model_handler._get_loss('test')['total']
+
+    def on_train_end(self, model_handler):
+        if not self.run_on_train_end:
+            return
+        test_loss = self._test_loss(model_handler)
+        if self.show_test and not np.isnan(test_loss):
+            print(f'[{pd.Timestamp.now():%H:%M:%S}] Test {test_loss:.3e}')
+
+        train_record = [
+            pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+            None if getattr(model_handler, 'best_epoch', None) is None else model_handler.best_epoch + 1,
+            getattr(model_handler, 'best_loss', None),
+            test_loss,
+        ]
+        df = pd.DataFrame([train_record], columns=self.columns)
+        df.to_csv(model_handler.model_path / 'train_record.csv', index=False)
+        self.train_record = pd.concat([self.train_record, df], axis=0)
+        self.train_record.to_csv(self._train_record_file(), index=False)
+        model_handler.train_record = self.train_record
 
 
 class SaveLossMonitor(Callback):
@@ -524,7 +815,7 @@ class SaveLossMonitor(Callback):
             y_log=True
         )
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         self.save_loss_monitor(model_handler)
 
     def on_train_end(self, model_handler):
@@ -604,7 +895,7 @@ class SavePredictionResults(Callback):
         self.output_dir = model_path / 'prediction_results'
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         df = self.get_df(model_handler)
         df.to_csv(self.output_dir / f'{_current_epoch_number(model_handler):0>6}.csv', index=False)
 
@@ -710,7 +1001,7 @@ class SaveParityPlot(Callback):
         self.output_dir = model_path / 'parity_plot'
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         folder = self.output_dir / f'{_current_epoch_number(model_handler):0>6}'
         folder.mkdir(parents=True, exist_ok=True)
         self.save_parity_plot(model_handler, folder)
@@ -756,7 +1047,7 @@ class LossMonitor(Callback):
             y_log=True
         )
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         if not self.show:
             return
         self.plotter.remove_plots()
@@ -786,7 +1077,7 @@ class StateDictsSaver(Callback):
         self.output_dir = model_path / 'state_dicts'
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         torch.save(
             _state_dicts(model_handler, self.save_optimizer),
             self.output_dir / f'{_current_epoch_number(model_handler):0>6}.pth'

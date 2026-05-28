@@ -31,7 +31,7 @@ class CounterCallback(Callback):
         super().__init__(every=every, run_on_train_end=False)
         self.calls = []
 
-    def on_call(self, model_handler):
+    def on_epoch_end(self, model_handler):
         self.calls.append(model_handler.epoch + 1)
 
 
@@ -54,13 +54,53 @@ def _make_model_handler(tmp_path, callbacks=(), train_epochs=3, save_result=True
     )
 
 
-def test_callback_every_controls_on_call_interval(tmp_path):
+def test_callback_every_controls_epoch_end_interval(tmp_path):
     callback = CounterCallback(every=2)
     model_handler = _make_model_handler(tmp_path, callbacks=(callback,), train_epochs=5, save_result=False)
 
     model_handler()
 
     assert callback.calls == [2, 4]
+
+
+def test_callback_priority_controls_order(tmp_path):
+    calls = []
+    model_handler = _make_model_handler(
+        tmp_path,
+        callbacks=(
+            LambdaCallback(on_epoch_end=lambda _: calls.append('late'), every=1, priority=200),
+            LambdaCallback(on_epoch_end=lambda _: calls.append('early'), every=1, priority=50),
+        ),
+        train_epochs=1,
+        save_result=False,
+    )
+
+    model_handler()
+
+    assert calls == ['early', 'late']
+
+
+def test_callback_epoch_events_are_separate(tmp_path):
+    calls = []
+    model_handler = _make_model_handler(
+        tmp_path,
+        callbacks=(LambdaCallback(
+            on_epoch_begin=lambda _: calls.append('epoch_begin'),
+            on_train_step_end=lambda handler: calls.append(('train_step_end', handler.current_train_losses['total'])),
+            on_validation_end=lambda handler: calls.append(('validation_end', handler.current_valid_losses['total'])),
+            on_epoch_end=lambda _: calls.append('epoch_end'),
+            every=1,
+        ),),
+        train_epochs=1,
+        save_result=False,
+    )
+
+    model_handler()
+
+    assert calls[0] == 'epoch_begin'
+    assert calls[1][0] == 'train_step_end'
+    assert calls[2][0] == 'validation_end'
+    assert calls[3] == 'epoch_end'
 
 
 def test_loss_monitor_can_be_disabled_for_headless_training(tmp_path):
@@ -107,7 +147,7 @@ def test_terminate_on_nan_requests_stop(tmp_path):
     model_handler = _make_model_handler(
         tmp_path,
         callbacks=(
-            LambdaCallback(on_call=set_nan, every=1),
+            LambdaCallback(on_epoch_end=set_nan, every=1),
             TerminateOnNaN(),
         ),
         train_epochs=5,
@@ -223,7 +263,7 @@ def test_lambda_callback_runs_hooks(tmp_path):
         tmp_path,
         callbacks=(LambdaCallback(
             on_train_begin=lambda _: calls.append('begin'),
-            on_call=lambda handler: calls.append(handler.epoch + 1),
+            on_epoch_end=lambda handler: calls.append(handler.epoch + 1),
             on_train_end=lambda _: calls.append('end'),
             every=1,
         ),),
