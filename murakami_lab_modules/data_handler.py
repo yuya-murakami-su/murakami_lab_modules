@@ -6,6 +6,7 @@ from . import utils
 class DataHandler:
     _device_warned = False
     _std_warned = False
+    _new_normalizer_warned = False
 
     def __init__(
             self,
@@ -22,6 +23,7 @@ class DataHandler:
             split_type: str = 'random_split',
             is_validation_data_batched: bool = False,
             use_train_as_valid: bool = False,
+            classic_normalizer: bool = False,
             random_seed: int = 2025,
             **kwargs
     ):
@@ -40,6 +42,7 @@ class DataHandler:
         self.split_type = split_type
         self.is_validation_data_batched = is_validation_data_batched
         self.use_train_as_valid = use_train_as_valid
+        self.classic_normalizer = classic_normalizer
         self.random_seed = random_seed
         self.kwargs = kwargs
 
@@ -54,9 +57,15 @@ class DataHandler:
 
         self._load_datafiles()
         self._send_to_device()
-        self._normalize_data()
-        self._get_default_dataset()
-        getattr(self, f'_{split_type}')(**self.kwargs)
+        if self.classic_normalizer:
+            self._normalize_data()
+            self._get_default_dataset()
+            getattr(self, f'_{split_type}')(**self.kwargs)
+        else:
+            self._warn_new_normalizer()
+            self._get_default_dataset(normalized=False)
+            getattr(self, f'_{split_type}')(**self.kwargs)
+            self._normalize_split_data()
         self._update_datasets()
         self._get_data_loader()
 
@@ -121,8 +130,55 @@ class DataHandler:
 
         return normalized, ave, std
 
-    def _get_default_dataset(self):
-        self.dataset = Dataset(self.normed_inputs, self.normed_outputs, self.labels)
+    @staticmethod
+    def _normalize_with_stats(data: torch.Tensor, ave: torch.Tensor, std: torch.Tensor):
+        if data.numel() == 0:
+            return data
+        return (data - ave) / std
+
+    def _warn_new_normalizer(self):
+        if not self.__class__._new_normalizer_warned:
+            utils.logging(
+                '[Warning] classic_normalizer=False is used. Normalization statistics are calculated from train data '
+                'only. Set classic_normalizer=True to use the previous behavior.'
+            )
+            self.__class__._new_normalizer_warned = True
+
+    def _normalize_split_data(self):
+        normed_train_inputs, self.input_ave, self.input_std = self._default_normalizer(
+            self.train.inputs,
+            self.unnormalized_input_idx
+        )
+        normed_train_outputs, self.output_ave, self.output_std = self._default_normalizer(
+            self.train.outputs,
+            self.unnormalized_output_idx
+        )
+
+        self.normed_inputs = self._normalize_with_stats(self.dataset.inputs, self.input_ave, self.input_std)
+        self.normed_outputs = self._normalize_with_stats(self.dataset.outputs, self.output_ave, self.output_std)
+
+        self.dataset = Dataset(self.normed_inputs, self.normed_outputs, self.dataset.labels)
+        self.train = Dataset(normed_train_inputs, normed_train_outputs, self.train.labels)
+        self.valid = Dataset(
+            self._normalize_with_stats(self.valid.inputs, self.input_ave, self.input_std),
+            self._normalize_with_stats(self.valid.outputs, self.output_ave, self.output_std),
+            self.valid.labels
+        )
+        self.test = Dataset(
+            self._normalize_with_stats(self.test.inputs, self.input_ave, self.input_std),
+            self._normalize_with_stats(self.test.outputs, self.output_ave, self.output_std),
+            self.test.labels
+        )
+        self.datasets = {'all': self.dataset}
+
+    def _get_default_dataset(self, normalized: bool = True):
+        if normalized:
+            inputs = self.normed_inputs
+            outputs = self.normed_outputs
+        else:
+            inputs = self.inputs
+            outputs = self.outputs
+        self.dataset = Dataset(inputs, outputs, self.labels)
         self.n_data: dict = {'all': self.dataset.n_data}
         self.datasets: dict = {'all': self.dataset}
 

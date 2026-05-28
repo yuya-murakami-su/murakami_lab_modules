@@ -14,7 +14,7 @@ setup(
         'matplotlib>=3.9.0',
         'sklearn>=1.7.2'
     ],
-    python_requires='>=3.8',
+    python_requires='>=3.11',
     author='Yuya Murakami',
     description='A simple library for machine learning',
     long_description=long_desc,
