@@ -306,7 +306,18 @@ class ModelHandler:
                     ['valid_' + r for r in self.regularization.reg_names]
             )
 
-        self.evolution = np.empty([self.train_epochs, evolution_col_count])
+        if self.train_epochs is None or self.train_epochs == 0:
+            self.evolution = np.empty([max(self.early_stop + 1, 1), evolution_col_count])
+        else:
+            self.evolution = np.empty([self.train_epochs, evolution_col_count])
+
+    def _ensure_evolution_capacity(self):
+        if self.epoch < self.evolution.shape[0]:
+            return
+
+        expanded = np.empty([max(self.evolution.shape[0] * 2, self.epoch + 1), self.evolution.shape[1]])
+        expanded[:self.evolution.shape[0]] = self.evolution
+        self.evolution = expanded
 
     def _run_callbacks(self, method: str):
         for cb in self.callbacks:
@@ -439,6 +450,7 @@ class ModelHandler:
             self.best_updated += 1
 
     def _update_evolution(self, train: np.ndarray, valid: np.ndarray):
+        self._ensure_evolution_capacity()
         self.evolution[self.epoch, 0] = self.epoch
         if self.has_data:
             if self.has_reg:
@@ -506,7 +518,7 @@ class ModelHandler:
         self.dt_epoch = time.perf_counter() - self.t_init
         if self.epoch == 0:
             self.t_init = time.perf_counter()
-        if self.callback_epoch is not None and self.train_epochs > self.epoch > 0 == self.epoch % self.callback_epoch:
+        if self.callback_epoch is not None and self.epoch > 0 and self.epoch % self.callback_epoch == 0:
             self._run_callbacks('on_call')
 
     def _is_training_finished(self):
@@ -528,7 +540,7 @@ class ModelHandler:
             self.optimizer.load_state_dict(state_dicts['optimizer_state_dict'])
 
     def _save_model(self):
-        (pd.DataFrame(self.evolution[:min(self.epoch + 1, self.train_epochs + 1)], columns=self.evolution_col).
+        (pd.DataFrame(self.evolution[:self.epoch], columns=self.evolution_col).
          to_csv(f'{self.model_path}\\evolution.csv'))
         torch.save(self.state_dicts, f'{self.model_path}\\state_dicts.pth')
 
