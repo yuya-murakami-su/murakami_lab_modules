@@ -75,7 +75,7 @@ def main():
     # Define range for regularization / 勾配制約計算範囲の定義
     input_generator = InputGenerator(
         size_of_generated_inputs=100,  # Test random 100 datapoints for regularization for every training epochs
-        distribution='random',
+        sampling='random',
         input_range=((0, 60), (0, 10)),  # 0 <= x[0] <= 2, 0 <= x[1] <= 10
         device_name='cpu',
         random_seed=2025,
