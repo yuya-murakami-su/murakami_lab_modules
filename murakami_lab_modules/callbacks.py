@@ -1,11 +1,16 @@
 from collections.abc import Callable
 from pathlib import Path
 import copy
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 import torch
+
+from . import utils
+
+logger = utils.get_logger(__name__)
 
 __all__ = [
     'Callback',
@@ -627,8 +632,19 @@ class HistoryRecorder(Callback):
 
 
 class ConsoleLogger(Callback):
-    def __init__(self, every: int = 1, priority: int = 200):
+    def __init__(
+            self,
+            every: int = 1,
+            priority: int = 200,
+            progress: bool = True,
+            log_summary: bool = True,
+            stream=None
+    ):
         super().__init__(every=every, run_on_train_end=True, priority=priority)
+        self.progress = progress
+        self.log_summary = log_summary
+        self.stream = stream if stream is not None else sys.stderr
+        self._last_message_length = 0
 
     @staticmethod
     def _time_string(model_handler) -> str:
@@ -681,13 +697,36 @@ class ConsoleLogger(Callback):
                 f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                 f'lr {model_handler.optimizer.current_lr():.2e}'
             )
-        print(message, end='')
+        if self.progress:
+            self._write_progress(message)
+
+    def _write_progress(self, message: str) -> None:
+        padding = max(self._last_message_length - len(message), 0)
+        self.stream.write('\r' + message + ' ' * padding)
+        self.stream.flush()
+        self._last_message_length = len(message)
+
+    def _clear_progress(self) -> None:
+        if not self.progress or self._last_message_length == 0:
+            return
+        self.stream.write('\r' + ' ' * self._last_message_length + '\r')
+        self.stream.flush()
+        self._last_message_length = 0
 
     def on_train_end(self, model_handler):
-        if self.run_on_train_end:
-            print('')
-            if getattr(model_handler, 'stop_reason', None) is not None:
-                print(f'Stopped early: {model_handler.stop_reason}')
+        if not self.run_on_train_end:
+            return
+        self._clear_progress()
+        if not self.log_summary:
+            return
+        message = (
+            f'Training finished: epochs={model_handler.epoch}, '
+            f'best_epoch={None if model_handler.best_epoch is None else model_handler.best_epoch + 1}, '
+            f'best_loss={model_handler.best_loss}'
+        )
+        if getattr(model_handler, 'stop_reason', None) is not None:
+            message += f', stop_reason={model_handler.stop_reason}'
+        logger.info(message)
 
 
 class FinalStateDictSaver(Callback):
@@ -751,7 +790,7 @@ class TrainRecordLogger(Callback):
             return
         test_loss = self._test_loss(model_handler)
         if self.show_test and not np.isnan(test_loss):
-            print(f'[{pd.Timestamp.now():%H:%M:%S}] Test {test_loss:.3e}')
+            logger.info('Test loss: %.3e', test_loss)
 
         train_record = [
             pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),

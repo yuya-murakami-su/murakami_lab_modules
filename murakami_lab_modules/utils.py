@@ -7,8 +7,41 @@ import inspect
 import json
 import logging as py_logging
 from pathlib import Path
+import sys
 
 logger = py_logging.getLogger('murakami_lab_modules')
+logger.addHandler(py_logging.NullHandler())
+
+
+def get_logger(name: str = None) -> py_logging.Logger:
+    if name is None:
+        return logger
+    return py_logging.getLogger(f'murakami_lab_modules.{name}')
+
+
+def configure_logging(
+        level: int = py_logging.INFO,
+        stream: bool = True,
+        log_file: str | Path = None,
+        fmt: str = '[%(asctime)s] %(levelname)s %(name)s: %(message)s',
+        datefmt: str = '%Y-%m-%d %H:%M:%S'
+) -> py_logging.Logger:
+    logger.setLevel(level)
+    formatter = py_logging.Formatter(fmt=fmt, datefmt=datefmt)
+    for handler in list(logger.handlers):
+        if not isinstance(handler, py_logging.NullHandler):
+            logger.removeHandler(handler)
+    if stream:
+        stream_handler = py_logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(formatter)
+        logger.addHandler(stream_handler)
+    if log_file is not None:
+        log_file = Path(log_file)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = py_logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    return logger
 
 
 def initialize_random_seed(seed: int) -> None:
@@ -32,11 +65,8 @@ def get_current_time(for_file_name: bool = False) -> str:
         return datetime.datetime.now().strftime('%y/%m/%d %H:%M:%S')
 
 
-def logging(log: str, log_name: str = 'logs.log') -> None:
-    logger.info(log)
-    if log_name is not None:
-        with open(log_name, 'a', encoding='utf-8_sig') as txt:
-            txt.write(f'[{get_current_time()}] {log}\n')
+def logging(log: str, level: int = py_logging.INFO) -> None:
+    logger.log(level, log)
 
 
 _device_alart = True
@@ -46,17 +76,17 @@ def get_device(device_name: str) -> torch.device:
         if torch.cuda.is_available():
             device = torch.device(device_name)
             if _device_alart:
-                logging('CUDA was found!')
+                logger.info('CUDA was found.')
                 _device_alart = False
         else:
             device = torch.device('cpu')
             if _device_alart:
-                logging('***WARNING*** CUDA was NOT found! CPU will be used.')
+                logger.warning('CUDA was not found. CPU will be used.')
                 _device_alart = False
     else:
         device = torch.device('cpu')
         if _device_alart:
-            logging('CPU will be used.')
+            logger.info('CPU will be used.')
             _device_alart = False
     return device
 

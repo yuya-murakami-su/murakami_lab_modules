@@ -15,6 +15,8 @@ __all__ = [
     'DataHandler',
 ]
 
+logger = utils.get_logger(__name__)
+
 
 class DataHandler:
     def __init__(
@@ -551,8 +553,10 @@ class DataHandler:
             }
         if self.use_train_as_valid:
             if self.is_validation_data_batched:
-                utils.logging('[Warning] Both of use_train_as_valid and is_validation_data_batched are True.'
-                              'Please consider to prepare valid dataset.')
+                logger.warning(
+                    'Both use_train_as_valid and is_validation_data_batched are True. '
+                    'Consider preparing a validation dataset.'
+                )
             if self.n_data['valid'] > 0:
                 raise ValueError('use_train_as_valid was set to True, while valid dataset is not empty.')
             self.data_loader['train_valid'] = self._make_data_loader('train', shuffle=False)

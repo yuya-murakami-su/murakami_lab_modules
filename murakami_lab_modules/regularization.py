@@ -17,6 +17,8 @@ __all__ = [
     'MatchDataLossRegWeight',
 ]
 
+logger = utils.get_logger(__name__)
+
 
 class RegularizationWeightPolicy:
     def initialize(
@@ -283,9 +285,10 @@ class Regularization:
                 raise ValueError(f'{self.reg_func_name}()[{idx}] is empty.')
         n_points = [reg.shape[0] for reg in regs if reg.ndim > 0]
         if len(set(n_points)) > 1 and not self.__class__._different_n_points_warned:
-            utils.logging(
-                f'[Warning] Regularization terms have different n_points: {n_points}. '
-                f'Each term is averaged independently before applying reg_weights.'
+            logger.warning(
+                'Regularization terms have different n_points: %s. '
+                'Each term is averaged independently before applying reg_weights.',
+                n_points
             )
             self.__class__._different_n_points_warned = True
         return regs
@@ -300,7 +303,7 @@ class Regularization:
                 if not is_finite.any():
                     torch.save(full_regs + [full_reg], 'invalid_regularization.pth')
                     raise ValueError(f'Too many invalid value was encountered during regularization.')
-                utils.logging(f'Invalid value was encountered during regularization.')
+                logger.warning('Invalid value was encountered during regularization.')
                 full_reg = torch.where(is_finite, full_reg, 0.0)
                 reg_mean = full_reg.sum() / is_finite.sum()
             else:

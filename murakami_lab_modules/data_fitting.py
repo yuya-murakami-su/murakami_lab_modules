@@ -8,6 +8,8 @@ from .neural_network import AbstractNeuralNetwork
 
 __all__ = ['DataFitting']
 
+logger = utils.get_logger(__name__)
+
 
 class DataFitting:
     def __init__(
@@ -23,7 +25,7 @@ class DataFitting:
         self._nn_call_styles: dict[int, str] = {}
 
         if data_handler.n_data['test'] == 0 and self.check_test:
-            utils.logging(f'[Warning] check_test was set to True while no test data available.')
+            logger.warning('check_test was set to True while no test data is available.')
             self.check_test = False
 
     def config_dict(self) -> dict[str, object]:

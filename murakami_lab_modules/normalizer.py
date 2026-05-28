@@ -1,6 +1,8 @@
 import torch
 from . import utils
 
+logger = utils.get_logger(__name__)
+
 
 class AbstractNormalizer:
     def fit(self, data: torch.Tensor) -> 'AbstractNormalizer':
@@ -62,7 +64,7 @@ class StandardNormalizer(AbstractNormalizer):
         if torch.lt(self.std, self.epsilon).any():
             self.std = torch.where(torch.lt(self.std, self.epsilon), 1, self.std)
             if not self.__class__._std_warned:
-                utils.logging('STD < epsilon was found during normalization.')
+                logger.warning('STD < epsilon was found during normalization.')
                 self.__class__._std_warned = True
 
         exclude_indices = self._normalized_exclude_indices(data.shape[1])
