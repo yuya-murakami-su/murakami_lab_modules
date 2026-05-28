@@ -32,6 +32,9 @@ class ModelHandler:
             callback_epoch: int = None,
             callbacks: tuple[object, ...] = None,
             random_seed: int = 2025,
+            save_result: bool = True,
+            save_model: bool = True,
+            verbose: bool = True,
             **kwargs
     ):
         self.locals = utils.get_local_dict(locals())
@@ -53,13 +56,20 @@ class ModelHandler:
         self.train_record_path = train_record_path
         self.recalculate_valid_loss = recalculate_valid_loss
         self.model_name = model_name
+        self.original_model_name = model_name
         self.kwargs = kwargs
         self.callback_epoch = callback_epoch
         self.callbacks = callbacks or []
+        self.save_result = save_result
+        self.save_model = save_model
+        self.verbose = verbose
 
         self._validate_inputs()
-        self._prepare_model_folder()
-        self._save_model_info()
+        if self.save_result:
+            self._prepare_model_folder()
+            self._save_model_info()
+        else:
+            self.model_path = None
         self._set_model()
         self._prepare_train_record()
         self._prepare_train_valuables()
@@ -77,6 +87,9 @@ class ModelHandler:
             'callback_epoch': self.callback_epoch,
             'callbacks': self.callbacks,
             'random_seed': self.random_seed,
+            'save_result': self.save_result,
+            'save_model': self.save_model,
+            'verbose': self.verbose,
             **self.kwargs
         })
 
@@ -145,7 +158,10 @@ class ModelHandler:
         if self.has_data:
             utils.save_json(f'{metadata_path}\\data_fitting.json', config['data_fitting'])
             utils.save_json(f'{metadata_path}\\data_handler.json', config['data_handler'])
-            torch.save(self.data_fitting.data_handler.normalizer_dict(), f'{self.model_path}\\normalizer.pth')
+            self.data_fitting.data_handler.save_summary(f'{metadata_path}\\data_summary.json')
+            self.data_fitting.data_handler.save_summary(f'{metadata_path}\\data_summary.csv')
+            if self.save_model:
+                torch.save(self.data_fitting.data_handler.normalizer_dict(), f'{self.model_path}\\normalizer.pth')
         if self.has_reg:
             utils.save_json(f'{metadata_path}\\regularization.json', config['regularization'])
             for idx, input_generator_ in enumerate(self.regularization.input_generators):
@@ -160,7 +176,12 @@ class ModelHandler:
 
     def _prepare_train_record(self):
         self.train_record_columns = ['Time', 'Epoch', 'Best loss', 'Test']
-        if os.path.exists(f'{self.train_record_path}.csv'):
+        if not self.save_result:
+            self.train_record = pd.DataFrame(
+                np.empty([0, len(self.train_record_columns)]),
+                columns=self.train_record_columns
+            )
+        elif os.path.exists(f'{self.train_record_path}.csv'):
             self.train_record = pd.read_csv(f'{self.train_record_path}.csv', index_col=None, encoding='cp932')
         else:
             self.train_record = pd.DataFrame(
@@ -245,19 +266,26 @@ class ModelHandler:
             if self.has_reg:
                 losses = []
                 batch_sizes = []
-                for x, y, _ in self.data_fitting.data_handler(phase):
-                    losses.append(self._data_reg_step(x, y, phase=phase))
+                for x, y, label in self.data_fitting.data_handler(phase):
+                    losses.append(self._data_reg_step(x, y, label, phase=phase))
                     batch_sizes.append(len(x))
                 return self._average_data_reg_losses(losses, batch_sizes)
             else:
-                loss_sum = 0.0
-                n_data = 0
-                for x, y, _ in self.data_fitting.data_handler(phase):
-                    loss_sum += self._data_step(x, y, phase=phase) * len(x)
-                    n_data += len(x)
-                return {'total': loss_sum / n_data}
+                losses = []
+                batch_sizes = []
+                for x, y, label in self.data_fitting.data_handler(phase):
+                    losses.append(self._data_step(x, y, label, phase=phase))
+                    batch_sizes.append(len(x))
+                return self._average_data_losses(losses, batch_sizes)
         else:
             return self._reg_step()
+
+    def _average_data_losses(self, losses: list[dict], batch_sizes: list[int]) -> dict[str, object]:
+        n_data = sum(batch_sizes)
+        return {
+            'total': sum(loss['total'] * n for loss, n in zip(losses, batch_sizes)) / n_data,
+            'data': sum(loss['data'] * n for loss, n in zip(losses, batch_sizes)) / n_data
+        }
 
     def _average_data_reg_losses(self, losses: list[dict], batch_sizes: list[int]) -> dict[str, object]:
         n_data = sum(batch_sizes)
@@ -271,21 +299,29 @@ class ModelHandler:
             averaged['terms'][name] = float(np.mean([loss['terms'][name] for loss in losses]))
         return averaged
 
-    def _data_reg_step(self, x: torch.Tensor, y: torch.Tensor, phase: str):
+    def _data_reg_step(self, x: torch.Tensor, y: torch.Tensor, label, phase: str):
         if phase == 'train':
             self.optimizer.zero_grad()
-            y_nn = self.nn(x=x)
-            loss = self.data_fitting.loss_criteria(y, y_nn)
-            data_loss = loss.item()
+            data_loss_info = self.data_fitting.compute_loss(
+                nn=self.nn,
+                x=x,
+                y=y,
+                label=label,
+                phase=phase,
+                epoch=self.epoch
+            )
+            data_loss = data_loss_info['total'].item()
 
             reg_mean, reg_loss = self.regularization.get_regularization_value(
                 nn=self.nn,
-                data_handler=self.data_fitting.data_handler
+                data_handler=self.data_fitting.data_handler,
+                epoch=self.epoch,
+                data_loss=data_loss_info['total'].detach()
             )
             if self.regularization.use_reg_prod:
-                loss.mul_(reg_loss)
+                loss = data_loss_info['total'] * reg_loss
             else:
-                loss.add_(reg_loss)
+                loss = data_loss_info['total'] + reg_loss
             reg_loss, reg_mean = reg_loss.item(), reg_mean.detach().cpu().numpy()
 
             loss.backward()
@@ -299,12 +335,21 @@ class ModelHandler:
 
         else:
             with torch.no_grad():
-                y_nn = self.nn(x=x)
-                data_loss = self.data_fitting.loss_criteria(y, y_nn).item()
+                data_loss_info = self.data_fitting.compute_loss(
+                    nn=self.nn,
+                    x=x,
+                    y=y,
+                    label=label,
+                    phase=phase,
+                    epoch=self.epoch
+                )
+                data_loss = data_loss_info['total'].item()
 
             reg_mean, reg_loss = self.regularization.get_regularization_value(
                 nn=self.nn,
-                data_handler=self.data_fitting.data_handler
+                data_handler=self.data_fitting.data_handler,
+                epoch=self.epoch,
+                data_loss=data_loss
             )
             reg_loss, reg_mean = reg_loss.item(), reg_mean.detach().cpu().numpy()
             if self.regularization.use_reg_prod:
@@ -318,25 +363,45 @@ class ModelHandler:
                 'terms': self._regularization_terms_to_dict(reg_mean)
             }
 
-    def _data_step(self, x: torch.Tensor, y: torch.Tensor, phase: str):
+    def _data_step(self, x: torch.Tensor, y: torch.Tensor, label, phase: str):
         if phase == 'train':
             self.optimizer.zero_grad()
-            y_nn = self.nn(x=x)
-            loss = self.data_fitting.loss_criteria(y, y_nn)
+            loss_info = self.data_fitting.compute_loss(
+                nn=self.nn,
+                x=x,
+                y=y,
+                label=label,
+                phase=phase,
+                epoch=self.epoch
+            )
+            loss = loss_info['total']
             loss.backward()
             self.optimizer.step(self.epoch)
-            data_loss = loss.item()
-            return data_loss
+            data_loss = loss_info['terms']['data'].item()
+            return {
+                'total': loss.item(),
+                'data': data_loss
+            }
 
         else:
             with torch.no_grad():
-                y_nn = self.nn(x=x)
-                data_loss = self.data_fitting.loss_criteria(y, y_nn).item()
-            return data_loss
+                loss_info = self.data_fitting.compute_loss(
+                    nn=self.nn,
+                    x=x,
+                    y=y,
+                    label=label,
+                    phase=phase,
+                    epoch=self.epoch
+                )
+                data_loss = loss_info['terms']['data'].item()
+            return {
+                'total': loss_info['total'].item(),
+                'data': data_loss
+            }
 
     def _reg_step(self):
         self.optimizer.zero_grad()
-        reg_mean, loss = self.regularization.get_regularization_value(nn=self.nn)
+        reg_mean, loss = self.regularization.get_regularization_value(nn=self.nn, epoch=self.epoch)
         loss.backward()
         self.optimizer.step(self.epoch)
         reg_loss, reg_mean = loss.item(), reg_mean.detach().cpu().numpy()
@@ -384,6 +449,9 @@ class ModelHandler:
         self.evolution.append(record)
 
     def _display_epoch_results(self):
+        if not self.verbose:
+            return
+
         if self.epoch == 0:
             dt = self.dt_epoch
         else:
@@ -444,7 +512,8 @@ class ModelHandler:
         return (0 < self.early_stop == self.best_updated) or epoch_limit_reached
 
     def _post_train_treatments(self):
-        print('')
+        if self.verbose:
+            print('')
         self._load_state_dicts()
         self._save_model()
         self._save_train_record()
@@ -459,8 +528,13 @@ class ModelHandler:
             self.optimizer.load_state_dict(state_dicts['optimizer_state_dict'])
 
     def _save_model(self):
+        if not self.save_result:
+            return
         pd.DataFrame(self.evolution, columns=self.evolution_col).to_csv(f'{self.model_path}\\evolution.csv')
-        torch.save(self.state_dicts, f'{self.model_path}\\state_dicts.pth')
+        if self.has_reg:
+            self.regularization.save_weight_report(f'{self.model_path}\\regularization_weight_report.csv')
+        if self.save_model:
+            torch.save(self.state_dicts, f'{self.model_path}\\state_dicts.pth')
 
     def _save_train_record(self):
         if self.has_data and self.data_fitting.check_test:
@@ -468,9 +542,13 @@ class ModelHandler:
                 test_loss = self._get_loss('test')['data']
             else:
                 test_loss = self._get_loss('test')['total']
-            utils.logging(f'Test {test_loss:.3e}')
+            if self.verbose:
+                utils.logging(f'Test {test_loss:.3e}')
         else:
             test_loss = np.nan
+
+        if not self.save_result:
+            return
 
         train_record = [utils.get_current_time(), self.epoch - self.best_updated, self.best_loss, test_loss]
         df = pd.DataFrame([train_record], columns=self.train_record_columns)

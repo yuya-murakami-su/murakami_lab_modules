@@ -1,3 +1,7 @@
+import json
+from collections import Counter
+from pathlib import Path
+
 import torch
 import pandas as pd
 import numpy as np
@@ -104,6 +108,149 @@ class DataHandler:
             'csv_encoding': self.csv_encoding,
             **self.kwargs
         })
+
+    def summary_dict(self, max_label_counts: int = 20) -> dict[str, object]:
+        return {
+            'paths': {
+                'input_data_path': self.input_data_path,
+                'output_data_path': self.output_data_path,
+                'label_data_path': self.label_data_path,
+            },
+            'columns': {
+                'input_idx': self.input_idx,
+                'output_idx': self.output_idx,
+                'label_idx': self.label_idx,
+                'input_key': self.input_key,
+                'output_key': self.output_key,
+                'label_key': self.label_key,
+            },
+            'shapes': {
+                'inputs': list(self.inputs.shape),
+                'outputs': list(self.outputs.shape),
+                'labels': list(self.labels.shape),
+            },
+            'n_data': dict(self.n_data),
+            'n_batch': dict(self.n_batch),
+            'split': {
+                'split_type': self.split_type,
+                'split_params': self._json_safe(self.kwargs),
+                'use_train_as_valid': self.use_train_as_valid,
+                'is_validation_data_batched': self.is_validation_data_batched,
+            },
+            'loading': {
+                'csv_encoding': self.csv_encoding,
+                'device_name': self.device_name,
+                'batch_size': self.batch_size,
+                'classic_normalizer': self.classic_normalizer,
+                'random_seed': self.random_seed,
+            },
+            'normalizers': {
+                'input': self._normalizer_summary(self.input_normalizer),
+                'output': self._normalizer_summary(self.output_normalizer),
+            },
+            'labels': self._label_summary(max_label_counts=max_label_counts),
+        }
+
+    def save_summary(self, path: str | Path, max_label_counts: int = 20) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        summary = self.summary_dict(max_label_counts=max_label_counts)
+        if path.suffix.lower() == '.csv':
+            pd.DataFrame(self._flatten_summary(summary), columns=['key', 'value']).to_csv(path, index=False)
+        else:
+            utils.save_json(path, summary)
+
+    @classmethod
+    def _flatten_summary(cls, data: dict[str, object], prefix: str = '') -> list[dict[str, object]]:
+        rows = []
+        for key, value in data.items():
+            flat_key = f'{prefix}.{key}' if prefix else str(key)
+            if isinstance(value, dict):
+                rows.extend(cls._flatten_summary(value, flat_key))
+            else:
+                rows.append({'key': flat_key, 'value': cls._summary_value_to_string(value)})
+        return rows
+
+    @staticmethod
+    def _summary_value_to_string(value: object) -> object:
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        return json.dumps(DataHandler._json_safe(value), ensure_ascii=False)
+
+    @staticmethod
+    def _json_safe(value: object) -> object:
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            return float(value)
+        if isinstance(value, np.bool_):
+            return bool(value)
+        if torch.is_tensor(value):
+            return DataHandler._tensor_summary(value)
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, tuple):
+            return [DataHandler._json_safe(item) for item in value]
+        if isinstance(value, list):
+            return [DataHandler._json_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): DataHandler._json_safe(item) for key, item in value.items()}
+        return repr(value)
+
+    @staticmethod
+    def _tensor_summary(tensor: torch.Tensor) -> dict[str, object]:
+        tensor_cpu = tensor.detach().cpu()
+        summary = {
+            'shape': list(tensor_cpu.shape),
+            'dtype': str(tensor_cpu.dtype).replace('torch.', ''),
+            'device': str(tensor.device),
+        }
+        if tensor_cpu.numel() == 0:
+            return summary | {'empty': True}
+        if not torch.is_floating_point(tensor_cpu):
+            tensor_cpu = tensor_cpu.to(dtype=torch.float32)
+        return summary | {
+            'empty': False,
+            'min': tensor_cpu.min().item(),
+            'max': tensor_cpu.max().item(),
+            'mean': tensor_cpu.mean().item(),
+        }
+
+    @staticmethod
+    def _normalizer_summary(normalizer: AbstractNormalizer) -> dict[str, object]:
+        state_summary = {}
+        for key, value in normalizer.state_dict().items():
+            if torch.is_tensor(value):
+                state_summary[key] = DataHandler._tensor_summary(value)
+            else:
+                state_summary[key] = DataHandler._json_safe(value)
+        return {
+            'class': utils.get_object_path(normalizer.__class__),
+            'state': state_summary,
+        }
+
+    def _label_summary(self, max_label_counts: int = 20) -> dict[str, object]:
+        labels = np.asarray(self.labels)
+        if labels.ndim == 1:
+            values = labels.tolist()
+        else:
+            values = [
+                row[0] if len(row) == 1 else tuple(row.tolist())
+                for row in labels
+            ]
+        counter = Counter(values)
+        summary = {
+            'shape': list(labels.shape),
+            'dtype': str(labels.dtype),
+            'n_unique': len(counter),
+            'counts_included': len(counter) <= max_label_counts,
+            'max_label_counts': max_label_counts,
+        }
+        if len(counter) <= max_label_counts:
+            summary['counts'] = {str(key): int(value) for key, value in counter.items()}
+        return summary
 
     def _load_datafiles(self):
         self.inputs = self._load_datafile(self.input_data_path, self.input_idx, self.input_key, self.csv_encoding)

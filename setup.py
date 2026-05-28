@@ -23,10 +23,15 @@ setup(
             'matplotlib>=3.9.0',
             'scikit-learn>=1.7.2',
         ],
+        'test': [
+            'pytest>=8.0.0',
+            'torch>=2.0.0',
+        ],
         'all': [
             'torch>=2.0.0',
             'matplotlib>=3.9.0',
             'scikit-learn>=1.7.2',
+            'pytest>=8.0.0',
         ],
     },
     python_requires='>=3.11',

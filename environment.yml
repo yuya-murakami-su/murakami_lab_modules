@@ -10,4 +10,5 @@ dependencies:
   # Optional dependencies used by plotting/statistics utilities and demos.
   - matplotlib~=3.10.0
   - scikit-learn~=1.7.2
+  - pytest
 prefix: C:\Users\YuyaMurakami\anaconda3\envs\git_env

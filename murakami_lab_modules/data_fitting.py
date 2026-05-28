@@ -4,6 +4,7 @@ import torch
 
 from . import utils
 from .data_handler import DataHandler
+from .neural_network import AbstractNeuralNetwork
 
 __all__ = ['DataFitting']
 
@@ -29,3 +30,42 @@ class DataFitting:
             'loss_criteria': self.loss_criteria,
             'check_test': self.check_test
         })
+
+    def compute_loss(
+            self,
+            nn: AbstractNeuralNetwork,
+            x: torch.Tensor,
+            y: torch.Tensor,
+            label=None,
+            phase: str = None,
+            epoch: int = None
+    ) -> dict[str, object]:
+        y_pred = self._call_nn(nn, x)
+        loss = self.loss_criteria(y, y_pred)
+        self._validate_loss(loss)
+        return {
+            'total': loss,
+            'terms': {
+                'data': loss
+            },
+            'y_pred': y_pred
+        }
+
+    @staticmethod
+    def _call_nn(nn: AbstractNeuralNetwork, x: torch.Tensor) -> torch.Tensor:
+        try:
+            return nn(x=x)
+        except TypeError as e:
+            if "unexpected keyword argument 'x'" not in str(e):
+                raise
+            return nn(x)
+
+    @staticmethod
+    def _validate_loss(loss: torch.Tensor) -> None:
+        if not torch.is_tensor(loss):
+            raise TypeError(f'loss_criteria must return torch.Tensor. {type(loss)} was returned.')
+        if loss.numel() != 1:
+            raise ValueError(
+                f'loss_criteria must return a scalar tensor. '
+                f'loss.shape={tuple(loss.shape)} was returned.'
+            )
