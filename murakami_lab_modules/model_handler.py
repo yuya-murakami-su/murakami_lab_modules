@@ -65,6 +65,8 @@ class DataFitting:
 
 
 class Regularization:
+    _different_n_points_warned = False
+
     def __init__(
             self,
             input_generators: (InputGenerator,),
@@ -112,30 +114,65 @@ class Regularization:
     def regularization(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
         raise NotImplementedError
 
-    def get_regularization_value(self, nn: AbstractNeuralNetwork, data_handler: DataHandler = None):
-        full_reg = self.reg_criteria(torch.stack(self.reg_func(data_handler=data_handler, nn=nn)))
+    def _validate_regularization_outputs(self, regs):
+        if not isinstance(regs, (list, tuple)):
+            raise TypeError(
+                f'{self.reg_func_name}() must return list or tuple of torch.Tensor. '
+                f'{type(regs)} was returned.'
+            )
+        if len(regs) != self.n_reg:
+            raise ValueError(
+                f'Inconsistent number of regularization terms: '
+                f'len({self.reg_func_name}()) = {len(regs)}, len(reg_weights) = {self.n_reg}.'
+            )
 
-        is_finite = torch.isfinite(full_reg)
-        if not is_finite.all():
-            if not is_finite.any(dim=1).all():
-                torch.save(full_reg, 'invalid_regularization.pth')
-                raise ValueError(f'Too many invalid value was encountered during regularization.')
-            utils.logging(f'Invalid value was encountered during regularization.')
-            full_reg = torch.where(is_finite, full_reg, 0.0)
-            count = is_finite.sum(dim=1)
-            reg_mean = full_reg.sum(dim=1) / count
-        else:
-            reg_mean = full_reg.mean(dim=1)
+        for idx, reg in enumerate(regs):
+            if not torch.is_tensor(reg):
+                raise TypeError(
+                    f'{self.reg_func_name}()[{idx}] must be torch.Tensor. {type(reg)} was returned.'
+                )
+            if reg.numel() == 0:
+                raise ValueError(f'{self.reg_func_name}()[{idx}] is empty.')
+        n_points = [reg.shape[0] for reg in regs if reg.ndim > 0]
+        if len(set(n_points)) > 1 and not self.__class__._different_n_points_warned:
+            utils.logging(
+                f'[Warning] Regularization terms have different n_points: {n_points}. '
+                f'Each term is averaged independently before applying reg_weights.'
+            )
+            self.__class__._different_n_points_warned = True
+        return regs
+
+    def _get_regularization_mean(self, regs):
+        reg_means = []
+        full_regs = []
+        for reg in regs:
+            full_reg = self.reg_criteria(reg)
+            is_finite = torch.isfinite(full_reg)
+            if not is_finite.all():
+                if not is_finite.any():
+                    torch.save(full_regs + [full_reg], 'invalid_regularization.pth')
+                    raise ValueError(f'Too many invalid value was encountered during regularization.')
+                utils.logging(f'Invalid value was encountered during regularization.')
+                full_reg = torch.where(is_finite, full_reg, 0.0)
+                reg_mean = full_reg.sum() / is_finite.sum()
+            else:
+                reg_mean = full_reg.mean()
+
+            full_regs.append(full_reg)
+            reg_means.append(reg_mean)
+
+        return torch.stack(reg_means)
+
+    def get_regularization_value(self, nn: AbstractNeuralNetwork, data_handler: DataHandler = None):
+        regs = self._validate_regularization_outputs(self.reg_func(data_handler=data_handler, nn=nn))
+        reg_mean = self._get_regularization_mean(regs)
 
         if self.use_reg_prod:
             reg_mean.add_(self.reg_min).pow_(self.reg_weights)
-            if self.n_reg > 1:
-                reg_value = torch.pow(reg_mean, self.reg_mean_pow).prod()
-            else:
-                reg_value = reg_mean.prod()
+            reg_value = reg_mean.prod()
         else:
             reg_mean.mul_(self.reg_weights).add_(self.reg_min)
-            reg_value = reg_mean.mean()
+            reg_value = reg_mean.sum()
 
         return reg_mean, reg_value
 
@@ -281,11 +318,9 @@ class ModelHandler:
         self.dt_epoch = None
         self.t_init = time.perf_counter()
 
-        evolution_col_count = 1
         self.evolution_col = ['epoch']
 
         if self.has_data:
-            evolution_col_count += 2
             self.evolution_col += ['train', 'valid']
             self.has_valid = self.data_fitting.data_handler.n_data['valid'] > 0
             self.has_test = self.data_fitting.data_handler.n_data['test'] > 0
@@ -294,11 +329,9 @@ class ModelHandler:
             self.has_test = False
 
         if self.has_reg:
-            evolution_col_count += self.regularization.n_reg + 1
             self.evolution_col += ['reg_total'] + self.regularization.reg_names
 
         if self.data_fitting is not None and self.regularization is not None:
-            evolution_col_count += self.regularization.n_reg + 3
             self.evolution_col = (
                     ['epoch', 'train', 'train_data', 'train_reg'] +
                     ['train_' + r for r in self.regularization.reg_names] +
@@ -306,18 +339,7 @@ class ModelHandler:
                     ['valid_' + r for r in self.regularization.reg_names]
             )
 
-        if self.train_epochs is None or self.train_epochs == 0:
-            self.evolution = np.empty([max(self.early_stop + 1, 1), evolution_col_count])
-        else:
-            self.evolution = np.empty([self.train_epochs, evolution_col_count])
-
-    def _ensure_evolution_capacity(self):
-        if self.epoch < self.evolution.shape[0]:
-            return
-
-        expanded = np.empty([max(self.evolution.shape[0] * 2, self.epoch + 1), self.evolution.shape[1]])
-        expanded[:self.evolution.shape[0]] = self.evolution
-        self.evolution = expanded
+        self.evolution = []
 
     def _run_callbacks(self, method: str):
         for cb in self.callbacks:
@@ -363,21 +385,33 @@ class ModelHandler:
 
         if self.has_data:
             if self.has_reg:
-                losses = np.empty([self.data_fitting.data_handler.n_batch[phase], 3 + self.regularization.n_reg])
-                for i, (x, y, _) in enumerate(self.data_fitting.data_handler(phase)):
-                    losses[i] = self._data_reg_step(x, y, phase=phase)
-                    losses[i, 0] *= len(x)
-                data_loss = losses[:, 0].sum(axis=0) / self.data_fitting.data_handler.n_data[phase]
-                loss_ave = losses.mean(axis=0)
-                loss_ave[0] = data_loss
-                return loss_ave
+                losses = []
+                batch_sizes = []
+                for x, y, _ in self.data_fitting.data_handler(phase):
+                    losses.append(self._data_reg_step(x, y, phase=phase))
+                    batch_sizes.append(len(x))
+                return self._average_data_reg_losses(losses, batch_sizes)
             else:
-                losses = np.empty([self.data_fitting.data_handler.n_batch[phase], 1])
-                for i, (x, y, _) in enumerate(self.data_fitting.data_handler(phase)):
-                    losses[i] = self._data_step(x, y, phase=phase) * len(x)
-                return losses.sum(axis=0) / self.data_fitting.data_handler.n_data[phase]
+                loss_sum = 0.0
+                n_data = 0
+                for x, y, _ in self.data_fitting.data_handler(phase):
+                    loss_sum += self._data_step(x, y, phase=phase) * len(x)
+                    n_data += len(x)
+                return {'total': loss_sum / n_data}
         else:
             return self._reg_step()
+
+    def _average_data_reg_losses(self, losses: list, batch_sizes: list):
+        n_data = sum(batch_sizes)
+        averaged = {
+            'total': sum(loss['total'] * n for loss, n in zip(losses, batch_sizes)) / n_data,
+            'data': sum(loss['data'] * n for loss, n in zip(losses, batch_sizes)) / n_data,
+            'reg': float(np.mean([loss['reg'] for loss in losses])),
+            'terms': {}
+        }
+        for name in self.regularization.reg_names:
+            averaged['terms'][name] = float(np.mean([loss['terms'][name] for loss in losses]))
+        return averaged
 
     def _data_reg_step(self, x: torch.Tensor, y: torch.Tensor, phase: str):
         if phase == 'train':
@@ -398,7 +432,12 @@ class ModelHandler:
 
             loss.backward()
             self.optimizer.step(self.epoch)
-            return np.hstack([[loss.item(), data_loss, reg_loss], reg_mean])
+            return {
+                'total': loss.item(),
+                'data': data_loss,
+                'reg': reg_loss,
+                'terms': self._regularization_terms_to_dict(reg_mean)
+            }
 
         else:
             with torch.no_grad():
@@ -414,7 +453,12 @@ class ModelHandler:
                 loss = data_loss * reg_loss
             else:
                 loss = data_loss + reg_loss
-            return np.hstack([[loss, data_loss, reg_loss], reg_mean])
+            return {
+                'total': loss,
+                'data': data_loss,
+                'reg': reg_loss,
+                'terms': self._regularization_terms_to_dict(reg_mean)
+            }
 
     def _data_step(self, x: torch.Tensor, y: torch.Tensor, phase: str):
         if phase == 'train':
@@ -438,10 +482,19 @@ class ModelHandler:
         loss.backward()
         self.optimizer.step(self.epoch)
         reg_loss, reg_mean = loss.item(), reg_mean.detach().cpu().numpy()
-        return np.hstack([[reg_loss], reg_mean])
+        return {
+            'total': reg_loss,
+            'terms': self._regularization_terms_to_dict(reg_mean)
+        }
 
-    def _update_best_loss(self, valid: np.ndarray):
-        current_loss = valid[0].item()
+    def _regularization_terms_to_dict(self, reg_mean: np.ndarray):
+        return {
+            name: value.item() if hasattr(value, 'item') else float(value)
+            for name, value in zip(self.regularization.reg_names, reg_mean)
+        }
+
+    def _update_best_loss(self, valid: dict):
+        current_loss = valid['total']
         if self.best_loss is None or self.best_loss > current_loss:
             self.best_loss = current_loss
             self.best_updated = 0
@@ -449,18 +502,28 @@ class ModelHandler:
         else:
             self.best_updated += 1
 
-    def _update_evolution(self, train: np.ndarray, valid: np.ndarray):
-        self._ensure_evolution_capacity()
-        self.evolution[self.epoch, 0] = self.epoch
+    def _update_evolution(self, train: dict, valid: dict):
+        record = {'epoch': self.epoch}
         if self.has_data:
             if self.has_reg:
-                self.evolution[self.epoch, 1:self.regularization.n_reg + 4] = train
-                self.evolution[self.epoch, self.regularization.n_reg + 4:] = valid
+                record.update({
+                    'train': train['total'],
+                    'train_data': train['data'],
+                    'train_reg': train['reg'],
+                    'valid': valid['total'],
+                    'valid_data': valid['data'],
+                    'valid_reg': valid['reg']
+                })
+                for name in self.regularization.reg_names:
+                    record[f'train_{name}'] = train['terms'][name]
+                    record[f'valid_{name}'] = valid['terms'][name]
             else:
-                self.evolution[self.epoch, 1] = train.item()
-                self.evolution[self.epoch, 2] = valid.item()
+                record.update({'train': train['total'], 'valid': valid['total']})
         else:
-            self.evolution[self.epoch, 1:] = train
+            record['reg_total'] = train['total']
+            for name in self.regularization.reg_names:
+                record[name] = train['terms'][name]
+        self.evolution.append(record)
 
     def _display_epoch_results(self):
         if self.epoch == 0:
@@ -474,42 +537,35 @@ class ModelHandler:
         else:
             dt_str = f'({dt:.1f} s)'
 
-        losses = self.evolution[self.epoch]
+        losses = self.evolution[-1]
 
         if self.has_data:
             if self.has_reg:
-                total_loss, train_data_loss, train_reg_loss = losses[1:4]
-                valid_loss, valid_data_loss, valid_reg_loss \
-                    = losses[self.regularization.n_reg + 4:self.regularization.n_reg + 7]
-                valid_regs = losses[self.regularization.n_reg + 7:]
                 valid_reg_str = ', '.join(
-                    [f'{name}: {value:.3e}' for name, value in zip(self.regularization.reg_names, valid_regs)]
+                    [f'{name}: {losses[f"valid_{name}"]:.3e}' for name in self.regularization.reg_names]
                 )
                 print(f'\r[{utils.get_current_time()}] '
                       f'{self.epoch + 1: >5} {dt_str} | '
-                      f'Train {total_loss:.3e} ({train_data_loss:.3e} & {train_reg_loss:.3e}), '
-                      f'Valid {valid_loss:.3e} ({valid_data_loss:.3e} & {valid_reg_loss:.3e}) | '
+                      f'Train {losses["train"]:.3e} ({losses["train_data"]:.3e} & {losses["train_reg"]:.3e}), '
+                      f'Valid {losses["valid"]:.3e} ({losses["valid_data"]:.3e} & {losses["valid_reg"]:.3e}) | '
                       f'{valid_reg_str} | '
                       f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
                       f'lr {self.optimizer.current_lr():.2e}',
                       end='')
             else:
-                total_loss, valid_loss = losses[1:3]
                 print(f'\r[{utils.get_current_time()}] '
                       f'{self.epoch + 1: >5} {dt_str} | '
-                      f'Train {total_loss:.3e}, Valid {valid_loss:.3e} | '
+                      f'Train {losses["train"]:.3e}, Valid {losses["valid"]:.3e} | '
                       f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
                       f'lr {self.optimizer.current_lr():.2e}',
                       end='')
         else:
-            reg_loss = losses[1]
-            regs = losses[1:]
             reg_str = ', '.join(
-                [f'{name}: {value:.3e}' for name, value in zip(self.regularization.reg_names, regs)]
+                [f'{name}: {losses[name]:.3e}' for name in self.regularization.reg_names]
             )
             print(f'\r[{utils.get_current_time()}] '
                   f'{self.epoch + 1: >5} {dt_str} | '
-                  f'Reg {reg_loss:.3e} | {reg_str} | '
+                  f'Reg {losses["reg_total"]:.3e} | {reg_str} | '
                   f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
                   f'lr {self.optimizer.current_lr():.2e}',
                   end='')
@@ -522,7 +578,12 @@ class ModelHandler:
             self._run_callbacks('on_call')
 
     def _is_training_finished(self):
-        return (0 < self.early_stop == self.best_updated) or self.train_epochs == self.epoch
+        epoch_limit_reached = (
+                self.train_epochs is not None and
+                self.train_epochs > 0 and
+                self.train_epochs == self.epoch
+        )
+        return (0 < self.early_stop == self.best_updated) or epoch_limit_reached
 
     def _post_train_treatments(self):
         print('')
@@ -540,16 +601,15 @@ class ModelHandler:
             self.optimizer.load_state_dict(state_dicts['optimizer_state_dict'])
 
     def _save_model(self):
-        (pd.DataFrame(self.evolution[:self.epoch], columns=self.evolution_col).
-         to_csv(f'{self.model_path}\\evolution.csv'))
+        pd.DataFrame(self.evolution, columns=self.evolution_col).to_csv(f'{self.model_path}\\evolution.csv')
         torch.save(self.state_dicts, f'{self.model_path}\\state_dicts.pth')
 
     def _save_train_record(self):
         if self.has_data and self.data_fitting.check_test:
             if self.has_reg:
-                test_loss = self._get_loss('test')[1].item()
+                test_loss = self._get_loss('test')['data']
             else:
-                test_loss = self._get_loss('test')[0].item()
+                test_loss = self._get_loss('test')['total']
             utils.logging(f'Test {test_loss:.3e}')
         else:
             test_loss = np.nan
@@ -567,70 +627,58 @@ class ModelHandler:
         }
 
     def get_loss_info_fnc(self, need_data: bool = True, need_reg: bool = True):
+        def get_xy_from_keys(evolution: list, keys: list, labels: list):
+            if len(evolution) == 0:
+                return np.empty([0]), [np.empty([0]) for _ in keys], labels
+            df = pd.DataFrame(evolution)
+            x = df['epoch'].to_numpy()
+            ys = [df[key].to_numpy() for key in keys]
+            return x, ys, labels
+
         if self.has_data:
             if self.has_reg:
                 if need_data and need_reg:
                     n_data = 4 + self.regularization.n_reg
+                    keys = (
+                            ['train_data', 'valid', 'valid_data', 'valid_reg'] +
+                            ['valid_' + r for r in self.regularization.reg_names]
+                    )
+                    labels = (['Train (data)', 'Valid (total)', 'Valid (data)', 'Valid (reg)'] +
+                              self.regularization.reg_names)
 
-                    def get_xy(evolution: np.ndarray, epoch: int):
-                        x = evolution[:epoch, 0]
-                        ys = [
-                                 evolution[:epoch, 2],
-                                 evolution[:epoch, self.regularization.n_reg + 4],
-                                 evolution[:epoch, self.regularization.n_reg + 5],
-                                 evolution[:epoch, self.regularization.n_reg + 6]
-                             ] + [
-                                 evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
-                                 range(self.regularization.n_reg)
-                             ]
-                        labels = (['Train (data)', 'Valid (total)', 'Valid (data)', 'Valid (reg)'] +
-                                  self.regularization.reg_names)
-                        return x, ys, labels
+                    def get_xy(evolution: list, _: int):
+                        return get_xy_from_keys(evolution, keys, labels)
 
                 elif need_data:
                     n_data = 2
+                    keys = ['train_data', 'valid_data']
+                    labels = ['Train (data)', 'Valid (data)']
 
-                    def get_xy(evolution: np.ndarray, epoch: int):
-                        x = evolution[:epoch, 0]
-                        ys = [
-                            evolution[:epoch, 2],
-                            evolution[:epoch, self.regularization.n_reg + 5]
-                        ]
-                        labels = ['Train (data)', 'Valid (data)']
-                        return x, ys, labels
+                    def get_xy(evolution: list, _: int):
+                        return get_xy_from_keys(evolution, keys, labels)
 
                 elif need_reg:
                     n_data = self.regularization.n_reg
+                    keys = ['valid_' + r for r in self.regularization.reg_names]
+                    labels = self.regularization.reg_names
 
-                    def get_xy(evolution: np.ndarray, epoch: int):
-                        x = evolution[:epoch, 0]
-                        ys = [
-                            evolution[:epoch, self.regularization.n_reg + 7 + i] for i in
-                            range(self.regularization.n_reg)
-                        ]
-                        labels = self.regularization.reg_names
-                        return x, ys, labels
+                    def get_xy(evolution: list, _: int):
+                        return get_xy_from_keys(evolution, keys, labels)
 
                 else:
                     raise ValueError('At least one of need_loss or need_reg must be True.')
             else:
                 n_data = 2
+                keys = ['train', 'valid']
+                labels = ['Train', 'Valid']
 
-                def get_xy(evolution: np.ndarray, epoch: int):
-                    x = evolution[:epoch, 0]
-                    ys = [evolution[:epoch, 1], evolution[:epoch, 2]]
-                    labels = ['Train', 'Valid']
-                    return x, ys, labels
+                def get_xy(evolution: list, _: int):
+                    return get_xy_from_keys(evolution, keys, labels)
         else:
             n_data = 1 + self.regularization.n_reg
+            keys = ['reg_total'] + self.regularization.reg_names
+            labels = ['Reg (all)'] + self.regularization.reg_names
 
-            def get_xy(evolution: np.ndarray, epoch: int):
-                x = evolution[:epoch, 0]
-                ys = [
-                         evolution[:epoch, 1],
-                     ] + [
-                         evolution[:epoch, 2 + i] for i in range(self.regularization.n_reg)
-                     ]
-                labels = ['Reg (all)'] + self.regularization.reg_names
-                return x, ys, labels
+            def get_xy(evolution: list, _: int):
+                return get_xy_from_keys(evolution, keys, labels)
         return n_data, get_xy
