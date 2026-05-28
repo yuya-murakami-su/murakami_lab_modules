@@ -17,7 +17,7 @@ from . import utils
 def get_relative_error(epsilon: float = 1e-10, as_loss_function: bool = False):
     if as_loss_function:
         def relative_error(y_true: torch.Tensor, y_calc: torch.Tensor):
-            return (y_true - y_calc).abs() / (y_true.abs() + epsilon).mean()
+            return ((y_true - y_calc).abs() / (y_true.abs() + epsilon)).mean()
     else:
         def relative_error(y_true: torch.Tensor, y_calc: torch.Tensor):
             return ((y_true - y_calc).abs() / (y_true.abs() + epsilon)).mean(dim=1, keepdim=True)

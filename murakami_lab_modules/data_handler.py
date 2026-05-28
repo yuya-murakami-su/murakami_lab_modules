@@ -5,6 +5,7 @@ from . import utils
 
 IndexLike = torch.Tensor | np.ndarray
 
+
 class DataHandler:
     _device_warned = False
     _std_warned = False
@@ -27,6 +28,7 @@ class DataHandler:
             use_train_as_valid: bool = False,
             classic_normalizer: bool = False,
             random_seed: int = 2025,
+            csv_encoding: str = None,
             **kwargs
     ):
         self.locals = utils.get_local_dict(locals())
@@ -46,6 +48,7 @@ class DataHandler:
         self.use_train_as_valid = use_train_as_valid
         self.classic_normalizer = classic_normalizer
         self.random_seed = random_seed
+        self.csv_encoding = csv_encoding
         self.kwargs = kwargs
 
         if label_data_path is None:
@@ -72,22 +75,55 @@ class DataHandler:
         self._get_data_loader()
 
     def _load_datafiles(self):
-        self.inputs = self._load_datafile(self.input_data_path, self.input_idx)
-        self.outputs = self._load_datafile(self.output_data_path, self.output_idx)
+        self.inputs = self._load_datafile(self.input_data_path, self.input_idx, self.csv_encoding)
+        self.outputs = self._load_datafile(self.output_data_path, self.output_idx, self.csv_encoding)
         if self.label_idx is None:
-            self.labels = torch.arange(self.inputs.shape[0]).view([-1, 1])
+            self.labels = np.arange(self.inputs.shape[0]).reshape(-1, 1)
         else:
-            self.labels = self._load_datafile(self.label_data_path, self.label_idx)
+            self.labels = self._load_label_file(self.label_data_path, self.label_idx, self.csv_encoding)
+        self._validate_data_lengths()
+
+    def _validate_data_lengths(self):
+        n_inputs = self.inputs.shape[0]
+        n_outputs = self.outputs.shape[0]
+        n_labels = len(self.labels)
+        if n_inputs == n_outputs == n_labels:
+            return
+
+        raise ValueError(
+            f'Inconsistent number of rows among input, output, and label data. '
+            f'input_data_path={self.input_data_path}: {n_inputs}, '
+            f'output_data_path={self.output_data_path}: {n_outputs}, '
+            f'label_data_path={self.label_data_path}: {n_labels}.'
+        )
 
     def _send_to_device(self):
         self.inputs = self.inputs.to(self.device)
         self.outputs = self.outputs.to(self.device)
-        self.labels = self.labels.to(self.device)
 
     @staticmethod
-    def _load_datafile(data_path: str, indices: list[int | str]) -> torch.Tensor:
+    def _read_csv(data_path: str, encoding: str = None) -> pd.DataFrame:
+        if encoding is not None:
+            return pd.read_csv(data_path, encoding=encoding, index_col=None)
+
+        last_error = None
+        for encoding_candidate in ('utf-8-sig', 'utf-8', 'cp932'):
+            try:
+                return pd.read_csv(data_path, encoding=encoding_candidate, index_col=None)
+            except UnicodeDecodeError as e:
+                last_error = e
+        raise UnicodeDecodeError(
+            last_error.encoding,
+            last_error.object,
+            last_error.start,
+            last_error.end,
+            f'Failed to decode {data_path} as utf-8-sig, utf-8, or cp932.'
+        )
+
+    @staticmethod
+    def _load_datafile(data_path: str, indices: list[int | str], csv_encoding: str = None) -> torch.Tensor:
         if data_path[-4:] == '.csv':
-            data_df = pd.read_csv(data_path, encoding='cp932', index_col=None)
+            data_df = DataHandler._read_csv(data_path, encoding=csv_encoding)
             if type(indices[0]) is str:
                 loaded = torch.tensor(data_df.loc[:, indices].to_numpy(), dtype=torch.float32)
             else:
@@ -97,6 +133,21 @@ class DataHandler:
         else:
             raise NotImplementedError
         return loaded
+
+    @staticmethod
+    def _load_label_file(data_path: str, indices: list[int | str], csv_encoding: str = None) -> np.ndarray:
+        if data_path[-4:] == '.csv':
+            data_df = DataHandler._read_csv(data_path, encoding=csv_encoding)
+            if type(indices[0]) is str:
+                return data_df.loc[:, indices].to_numpy()
+            return data_df.iloc[:, indices].to_numpy()
+        elif data_path[-4:] == '.pth':
+            loaded = torch.load(data_path, weights_only=False)
+            if torch.is_tensor(loaded):
+                return loaded[:, indices].detach().cpu().numpy()
+            return np.asarray(loaded)[:, indices]
+        else:
+            raise NotImplementedError
 
     def _normalize_data(self):
         self._input_normalizer()
@@ -277,7 +328,7 @@ class Dataset:
             self,
             inputs: torch.Tensor | list,
             outputs: torch.Tensor | list,
-            labels: torch.Tensor | list
+            labels
     ):
         self.inputs = inputs
         self.outputs = outputs
@@ -286,6 +337,71 @@ class Dataset:
             self.n_data = inputs.shape[0]
         else:
             self.n_data = len(inputs)
+
+    @staticmethod
+    def _get_tensor_indices(indices: IndexLike | list[int] | tuple[int, ...], device: torch.device) -> torch.Tensor:
+        if torch.is_tensor(indices):
+            return indices.to(device=device)
+        return torch.as_tensor(indices, device=device)
+
+    def _get_permutation(self):
+        if type(self.inputs) is torch.Tensor:
+            return torch.randperm(self.n_data, device=self.inputs.device)
+        return torch.randperm(self.n_data).tolist()
+
+    @staticmethod
+    def _indices_for_metadata(indices):
+        if torch.is_tensor(indices):
+            return indices.detach().cpu().numpy()
+        return indices
+
+    @staticmethod
+    def _select_metadata(metadata, indices):
+        indices = Dataset._indices_for_metadata(indices)
+        if isinstance(metadata, np.ndarray):
+            return metadata[indices]
+        if torch.is_tensor(metadata):
+            return metadata[indices]
+        if isinstance(indices, slice):
+            return metadata[indices]
+        if isinstance(indices, np.ndarray):
+            indices = indices.tolist()
+        if len(indices) > 0 and type(indices[0]) is bool:
+            assert len(indices) == len(metadata)
+            indices = [idx for idx, use in enumerate(indices) if use]
+        return [metadata[idx] for idx in indices]
+
+    def _select(self, indices) -> 'Dataset':
+        if type(self.inputs) is torch.Tensor:
+            if isinstance(indices, slice):
+                return Dataset(self.inputs[indices], self.outputs[indices], self._select_metadata(self.labels, indices))
+            tensor_indices = self._get_tensor_indices(indices, self.inputs.device)
+            return Dataset(
+                self.inputs[tensor_indices],
+                self.outputs[tensor_indices],
+                self._select_metadata(self.labels, tensor_indices)
+            )
+
+        elif type(self.inputs) is list:
+            if isinstance(indices, slice):
+                indices = range(*indices.indices(self.n_data))
+            elif torch.is_tensor(indices):
+                indices = indices.detach().cpu().tolist()
+            elif isinstance(indices, np.ndarray):
+                indices = indices.tolist()
+
+            if len(indices) > 0 and type(indices[0]) is bool:
+                assert len(indices) == self.n_data
+                indices = [idx for idx, use in enumerate(indices) if use]
+
+            return Dataset(
+                [self.inputs[idx] for idx in indices],
+                [self.outputs[idx] for idx in indices],
+                self._select_metadata(self.labels, indices)
+            )
+
+        else:
+            raise ValueError(f'self.inputs must be either of torch.Tensor or list: {type(self.inputs)} was given.')
 
     def random_split(self, split_ratio: tuple[float, ...]):
         if len(split_ratio) == 1:
@@ -310,65 +426,33 @@ class Dataset:
             n_valid = int(self.n_data * split_ratio[1])
             n_test = self.n_data - n_train - n_valid
 
-        idx = np.arange(self.n_data)
-        np.random.shuffle(idx)
-        self.inputs = self.inputs[idx]
-        self.outputs = self.outputs[idx]
-        self.labels = self.labels[idx]
+        shuffled = self._select(self._get_permutation())
 
-        train = Dataset(self.inputs[:n_train], self.outputs[:n_train], self.labels[:n_train])
+        train = shuffled._select(slice(None, n_train))
         if n_valid > 0:
             idx = slice(n_train, n_train + n_valid)
-            valid = Dataset(self.inputs[idx], self.outputs[idx], self.labels[idx])
+            valid = shuffled._select(idx)
         else:
             valid = self.empty_dataset()
         if n_test > 0:
             idx = slice(n_train + n_valid, None)
-            test = Dataset(self.inputs[idx], self.outputs[idx], self.labels[idx])
+            test = shuffled._select(idx)
         else:
             test = self.empty_dataset()
         return train, valid, test
 
     def index_split(self, indices: IndexLike):
-        if type(self.inputs) is torch.Tensor:
-            return Dataset(self.inputs[indices], self.outputs[indices], self.labels[indices])
-
-        elif type(self.inputs) is list:
-            inputs, outputs, labels = [], [], []
-            if type(indices[0]) is bool:
-                assert len(indices) == self.n_data
-                for idx in range(self.n_data):
-                    if indices[idx]:
-                        inputs.append(self.inputs[idx])
-                        outputs.append(self.outputs[idx])
-                        labels.append(self.labels[idx])
-            else:
-                for idx in indices:
-                    inputs.append(self.inputs[idx])
-                    outputs.append(self.outputs[idx])
-                    labels.append(self.labels[idx])
-            return Dataset(inputs, outputs, labels)
-
-        else:
-            raise ValueError(f'self.inputs must be either of torch.Tensor or list: {type(self.inputs)} was given.')
+        return self._select(indices)
 
     def __call__(self, shuffle: bool = False):
         if shuffle:
-            idx = np.arange(self.n_data)
-            np.random.shuffle(idx)
-            if type(self.inputs) is torch.Tensor:
-                return self.inputs[idx], self.outputs[idx], self.labels[idx]
-            else:
-                inputs = [self.inputs[i] for i in idx]
-                outputs = [self.outputs[i] for i in idx]
-                labels = [self.labels[i] for i in idx]
-                return inputs, outputs, labels
+            return self._select(self._get_permutation())()
         else:
             return self.inputs, self.outputs, self.labels
 
     @staticmethod
     def empty_dataset() -> 'Dataset':
-        return Dataset(torch.empty([0]), torch.empty([0]), torch.empty([0]))
+        return Dataset(torch.empty([0]), torch.empty([0]), np.empty([0, 1], dtype=object))
 
 
 class DataLoader:

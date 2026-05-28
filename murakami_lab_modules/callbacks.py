@@ -14,6 +14,24 @@ def relative_error(x_true: torch.Tensor, x_pred: torch.Tensor):
     return (x_true - x_pred).abs() / (x_true.abs() + 1e-10).mean(dim=1, keepdim=True)
 
 
+def _labels_to_numpy(labels) -> np.ndarray:
+    if torch.is_tensor(labels):
+        labels = labels.detach().cpu().numpy()
+    else:
+        labels = np.asarray(labels)
+    if labels.ndim == 1:
+        labels = labels.reshape(-1, 1)
+    return labels
+
+
+def _get_label_columns(data_handler) -> list[str]:
+    if data_handler.label_idx is None:
+        return ['label']
+    if len(data_handler.label_idx) == 1:
+        return [str(data_handler.label_idx[0])]
+    return [str(label) for label in data_handler.label_idx]
+
+
 class Callback:
     def on_train_begin(self, model_handler):
         pass
@@ -96,6 +114,7 @@ class SavePredictionResults(Callback):
             for key in ['train', 'valid', 'test']:
                 for x, y, label in model_handler.data_fitting.data_handler(key):
                     y_pred = model_handler.nn(x)
+                    label = _labels_to_numpy(label)
 
                     x_ = model_handler.data_fitting.data_handler.undo_normalize_x(x)
                     y_ = model_handler.data_fitting.data_handler.undo_normalize_y(y)
@@ -107,8 +126,8 @@ class SavePredictionResults(Callback):
                             [metric(y, y_pred) for metric in self.normalized_metrics]
                         ).cpu().numpy()
                         prediction_results.append(np.hstack([
-                            label.cpu().numpy(),
-                            np.full(label.cpu().numpy().shape, key),
+                            label,
+                            np.full(label.shape, key),
                             x_.cpu().numpy(),
                             y_.cpu().numpy(),
                             y_pred_.cpu().numpy(),
@@ -116,8 +135,8 @@ class SavePredictionResults(Callback):
                         ]))
                     else:
                         prediction_results.append(np.hstack([
-                            label.cpu().numpy(),
-                            np.full(label.cpu().numpy().shape, key),
+                            label,
+                            np.full(label.shape, key),
                             x_.cpu().numpy(),
                             y_.cpu().numpy(),
                             y_pred_.cpu().numpy()
@@ -125,7 +144,7 @@ class SavePredictionResults(Callback):
             prediction_results = np.vstack(prediction_results)
 
         columns = (
-                ['label'] + ['key'] +
+                _get_label_columns(model_handler.data_fitting.data_handler) + ['key'] +
                 [f'x_{i}' for i in range(model_handler.nn.n_input)] +
                 [f'y_true_{i}' for i in range(model_handler.nn.n_output)] +
                 [f'y_pred_{i}' for i in range(model_handler.nn.n_output)] +
