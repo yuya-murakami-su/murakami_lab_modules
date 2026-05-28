@@ -175,6 +175,7 @@ results = cv.run(params={"lr": 1e-3, "batch_size": 32, "n_node": 64})
 Saved model folders contain:
 
 - `config.json` and per-component metadata JSON files
+- `run_summary.csv`
 - `evolution.csv` when history saving is enabled
 - lightweight data summaries
 - `state_dicts.pth` and `normalizer.pth` when `save_model=True`

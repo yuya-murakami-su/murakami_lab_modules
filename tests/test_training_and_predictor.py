@@ -63,7 +63,7 @@ def test_model_handler_trains_one_epoch_and_saves_files(tmp_path):
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
     )
 
     model_handler()
@@ -73,8 +73,23 @@ def test_model_handler_trains_one_epoch_and_saves_files(tmp_path):
     assert (tmp_path / 'Model' / model_handler.model_name / 'normalizer.pth').exists()
     assert (tmp_path / 'Model' / model_handler.model_name / 'state_dicts.pth').exists()
     assert (tmp_path / 'Model' / model_handler.model_name / 'evolution.csv').exists()
+    assert (tmp_path / 'Model' / model_handler.model_name / 'run_summary.csv').exists()
+    assert (tmp_path / 'run_summary.csv').exists()
     assert (tmp_path / 'Model' / model_handler.model_name / 'metadata' / 'data_summary.json').exists()
     assert (tmp_path / 'Model' / model_handler.model_name / 'metadata' / 'data_summary.csv').exists()
+    summary = pd.read_csv(tmp_path / 'run_summary.csv')
+    assert list(summary.columns) == [
+        'time',
+        'model_name',
+        'model_path',
+        'best_epoch',
+        'best_loss',
+        'train_loss',
+        'valid_loss',
+        'test_loss',
+        'stop_reason',
+        'n_epochs',
+    ]
 
 
 def test_model_handler_can_skip_heavy_model_files(tmp_path):
@@ -88,7 +103,7 @@ def test_model_handler_can_skip_heavy_model_files(tmp_path):
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         save_model=False,
     )
 
@@ -98,6 +113,7 @@ def test_model_handler_can_skip_heavy_model_files(tmp_path):
     assert model_path.exists()
     assert (model_path / 'config.json').exists()
     assert (model_path / 'evolution.csv').exists()
+    assert (model_path / 'run_summary.csv').exists()
     assert (model_path / 'metadata' / 'data_summary.json').exists()
     assert not (model_path / 'state_dicts.pth').exists()
     assert not (model_path / 'normalizer.pth').exists()
@@ -114,7 +130,7 @@ def test_model_handler_can_disable_history_file(tmp_path):
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         save_history=False,
     )
 
@@ -136,7 +152,7 @@ def test_model_handler_can_keep_sparse_history(tmp_path):
         data_fitting=data_fitting,
         train_epochs=5,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         history_policy='sparse',
         history_every=2,
         keep_best_history=False,
@@ -162,7 +178,7 @@ def test_model_handler_can_skip_in_memory_history(tmp_path):
         data_fitting=data_fitting,
         train_epochs=2,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         history_policy='none',
         verbose=False,
     )
@@ -186,7 +202,7 @@ def test_save_model_false_skips_best_state_snapshot(tmp_path):
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         save_model=False,
     )
 
@@ -210,7 +226,7 @@ def test_model_handler_can_disable_all_file_outputs(tmp_path):
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         save_result=False,
     )
 
@@ -219,7 +235,7 @@ def test_model_handler_can_disable_all_file_outputs(tmp_path):
     assert model_handler.model_path is None
     assert len(model_handler.evolution) == 1
     assert not (tmp_path / 'Model').exists()
-    assert not (tmp_path / 'train_record.csv').exists()
+    assert not (tmp_path / 'run_summary.csv').exists()
 
 
 def test_save_result_false_skips_best_state_snapshot(tmp_path):
@@ -233,7 +249,7 @@ def test_save_result_false_skips_best_state_snapshot(tmp_path):
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         save_result=False,
     )
 
@@ -257,7 +273,7 @@ def test_model_handler_verbose_false_still_saves_results(tmp_path, capsys):
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         verbose=False,
     )
 
@@ -288,7 +304,7 @@ def test_model_handler_with_regularization_saves_weight_report(tmp_path):
         regularization=regularization,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         verbose=False,
     )
 
@@ -324,7 +340,7 @@ def test_nn_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path
         data_fitting=data_fitting,
         train_epochs=1,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
     )
     model_handler()
 

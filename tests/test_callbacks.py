@@ -46,7 +46,7 @@ def _make_model_handler(tmp_path, callbacks=(), train_epochs=3, save_result=True
         data_fitting=data_fitting,
         train_epochs=train_epochs,
         save_path=str(tmp_path / 'Model'),
-        train_record_path=str(tmp_path / 'train_record'),
+        summary_path=str(tmp_path / 'run_summary'),
         callbacks=callbacks,
         save_result=save_result,
         verbose=False,

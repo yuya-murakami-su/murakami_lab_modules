@@ -33,7 +33,7 @@ __all__ = [
     'StateDictsSaver',
     'TargetLossReached',
     'TerminateOnNaN',
-    'TrainRecordLogger',
+    'RunSummaryLogger',
     'RegularizationReportSaver',
     'mse_error',
     'relative_error',
@@ -753,30 +753,41 @@ class RegularizationReportSaver(Callback):
             model_handler.regularization.save_weight_report(model_handler.model_path / self.filename)
 
 
-class TrainRecordLogger(Callback):
+class RunSummaryLogger(Callback):
     def __init__(
             self,
-            train_record_path: str | Path = 'train_record',
+            summary_path: str | Path = 'run_summary',
             show_test: bool = True,
             priority: int = 500,
     ):
         super().__init__(every=None, run_on_train_end=True, priority=priority)
-        self.train_record_path = Path(train_record_path)
+        self.summary_path = Path(summary_path)
         self.show_test = show_test
-        self.columns = ['Time', 'Epoch', 'Best loss', 'Test']
-        self.train_record = None
+        self.columns = [
+            'time',
+            'model_name',
+            'model_path',
+            'best_epoch',
+            'best_loss',
+            'train_loss',
+            'valid_loss',
+            'test_loss',
+            'stop_reason',
+            'n_epochs',
+        ]
+        self.run_summary = None
 
-    def _train_record_file(self) -> Path:
-        if self.train_record_path.suffix:
-            return self.train_record_path
-        return self.train_record_path.with_suffix('.csv')
+    def _summary_file(self) -> Path:
+        if self.summary_path.suffix:
+            return self.summary_path
+        return self.summary_path.with_suffix('.csv')
 
     def on_train_begin(self, model_handler):
-        if self._train_record_file().exists():
-            self.train_record = pd.read_csv(self._train_record_file(), index_col=None)
+        if self._summary_file().exists():
+            self.run_summary = pd.read_csv(self._summary_file(), index_col=None)
         else:
-            self.train_record = pd.DataFrame(np.empty([0, len(self.columns)]), columns=self.columns)
-        model_handler.train_record = self.train_record
+            self.run_summary = pd.DataFrame(np.empty([0, len(self.columns)]), columns=self.columns)
+        model_handler.run_summary = self.run_summary
 
     def _test_loss(self, model_handler) -> float:
         if not (model_handler.has_data and model_handler.data_fitting.check_test):
@@ -785,6 +796,15 @@ class TrainRecordLogger(Callback):
             return model_handler._get_loss('test')['data']
         return model_handler._get_loss('test')['total']
 
+    @staticmethod
+    def _recorded_loss(model_handler, key: str) -> float:
+        record = getattr(model_handler, 'current_evolution', None)
+        if record is None:
+            return np.nan
+        if model_handler.has_reg and f'{key}_data' in record:
+            return record[f'{key}_data']
+        return record.get(key, np.nan)
+
     def on_train_end(self, model_handler):
         if not self.run_on_train_end:
             return
@@ -792,17 +812,23 @@ class TrainRecordLogger(Callback):
         if self.show_test and not np.isnan(test_loss):
             logger.info('Test loss: %.3e', test_loss)
 
-        train_record = [
+        row = [
             pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+            model_handler.model_name,
+            str(model_handler.model_path),
             None if getattr(model_handler, 'best_epoch', None) is None else model_handler.best_epoch + 1,
             getattr(model_handler, 'best_loss', None),
+            self._recorded_loss(model_handler, 'train'),
+            self._recorded_loss(model_handler, 'valid'),
             test_loss,
+            getattr(model_handler, 'stop_reason', None),
+            model_handler.epoch,
         ]
-        df = pd.DataFrame([train_record], columns=self.columns)
-        df.to_csv(model_handler.model_path / 'train_record.csv', index=False)
-        self.train_record = pd.concat([self.train_record, df], axis=0)
-        self.train_record.to_csv(self._train_record_file(), index=False)
-        model_handler.train_record = self.train_record
+        df = pd.DataFrame([row], columns=self.columns)
+        df.to_csv(model_handler.model_path / 'run_summary.csv', index=False)
+        self.run_summary = pd.concat([self.run_summary, df], axis=0)
+        self.run_summary.to_csv(self._summary_file(), index=False)
+        model_handler.run_summary = self.run_summary
 
 
 class SaveLossMonitor(Callback):

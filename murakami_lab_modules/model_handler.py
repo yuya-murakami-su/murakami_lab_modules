@@ -24,7 +24,7 @@ class ModelHandler:
             load_model: str = None,
             load_optimizer: bool = False,
             save_path: str = 'Model',
-            train_record_path: str = 'train_record',
+            summary_path: str = 'run_summary',
             recalculate_valid_loss: bool = True,
             model_name: str = None,
             callbacks: tuple[object, ...] = None,
@@ -55,7 +55,7 @@ class ModelHandler:
         self.random_seed = random_seed
 
         self.save_path = Path(save_path)
-        self.train_record_path = Path(train_record_path)
+        self.summary_path = Path(summary_path)
         self.recalculate_valid_loss = recalculate_valid_loss
         self.run_manager = RunManager(save_path=save_path, model_name=model_name)
         self.model_name = self.run_manager.model_name
@@ -92,7 +92,7 @@ class ModelHandler:
             'load_model': self.load_model,
             'load_optimizer': self.load_optimizer,
             'save_path': self.save_path,
-            'train_record_path': self.train_record_path,
+            'summary_path': self.summary_path,
             'recalculate_valid_loss': self.recalculate_valid_loss,
             'model_name': self.model_name,
             'callbacks': self.callbacks,
@@ -146,7 +146,7 @@ class ModelHandler:
             HistoryLogger,
             HistoryRecorder,
             RegularizationReportSaver,
-            TrainRecordLogger,
+            RunSummaryLogger,
         )
 
         user_callbacks = list(self.callbacks)
@@ -174,8 +174,8 @@ class ModelHandler:
                 core_callbacks.append(FinalStateDictSaver())
             if self.has_reg:
                 core_callbacks.append(RegularizationReportSaver())
-            core_callbacks.append(TrainRecordLogger(
-                train_record_path=self.train_record_path,
+            core_callbacks.append(RunSummaryLogger(
+                summary_path=self.summary_path,
                 show_test=self.verbose,
             ))
         self.callbacks = core_callbacks + user_callbacks
@@ -198,7 +198,7 @@ class ModelHandler:
         self.stop_reason = None
         self.dt_epoch = None
         self.t_init = time.perf_counter()
-        self.train_record = None
+        self.run_summary = None
 
         self.evolution_col = ['epoch']
 
