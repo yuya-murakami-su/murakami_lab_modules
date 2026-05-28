@@ -638,13 +638,18 @@ class ConsoleLogger(Callback):
             priority: int = 200,
             progress: bool = True,
             log_summary: bool = True,
+            min_interval: float = 1.0,
             stream=None
     ):
         super().__init__(every=every, run_on_train_end=True, priority=priority)
+        if min_interval < 0:
+            raise ValueError('min_interval must be non-negative.')
         self.progress = progress
         self.log_summary = log_summary
+        self.min_interval = float(min_interval)
         self.stream = stream if stream is not None else sys.stderr
         self._last_message_length = 0
+        self._last_progress_time = None
 
     @staticmethod
     def _time_string(model_handler) -> str:
@@ -659,6 +664,8 @@ class ConsoleLogger(Callback):
         return f'({dt:.1f} s)'
 
     def on_epoch_end(self, model_handler):
+        if not self.progress or not self._should_update_progress():
+            return
         losses = _latest_evolution_record(model_handler, self.__class__.__name__)
         dt_str = self._time_string(model_handler)
         best_loss = getattr(model_handler, 'best_loss', np.nan)
@@ -697,8 +704,14 @@ class ConsoleLogger(Callback):
                 f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                 f'lr {model_handler.optimizer.current_lr():.2e}'
             )
-        if self.progress:
-            self._write_progress(message)
+        self._write_progress(message)
+
+    def _should_update_progress(self) -> bool:
+        now = time.perf_counter()
+        if self._last_progress_time is None or now - self._last_progress_time >= self.min_interval:
+            self._last_progress_time = now
+            return True
+        return False
 
     def _write_progress(self, message: str) -> None:
         padding = max(self._last_message_length - len(message), 0)

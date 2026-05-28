@@ -17,6 +17,7 @@ from murakami_lab_modules.callbacks import (
     StateDictsSaver,
     TargetLossReached,
     TerminateOnNaN,
+    ConsoleLogger,
 )
 from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.model_handler import ModelHandler
@@ -274,6 +275,30 @@ def test_lambda_callback_runs_hooks(tmp_path):
     model_handler()
 
     assert calls == ['begin', 1, 2, 'end']
+
+
+def test_console_logger_throttles_progress_by_time(tmp_path):
+    class Stream:
+        def __init__(self):
+            self.count = 0
+
+        def write(self, _):
+            self.count += 1
+
+        def flush(self):
+            pass
+
+    stream = Stream()
+    model_handler = _make_model_handler(
+        tmp_path,
+        callbacks=(ConsoleLogger(stream=stream, min_interval=10.0, log_summary=False),),
+        train_epochs=3,
+        save_result=False,
+    )
+
+    model_handler()
+
+    assert stream.count == 2
 
 
 def test_save_prediction_results_requires_saved_results(tmp_path):
