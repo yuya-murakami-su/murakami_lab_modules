@@ -3,6 +3,7 @@ import numpy as np
 import os
 from .neural_network import AbstractNeuralNetwork
 from . import utils
+from .normalizer import AbstractNormalizer
 
 VariableSpec = int | float | tuple[float, float] | list[float]
 
@@ -143,10 +144,11 @@ class NNPredictor(AbstractPredictor):
                         x = torch.tensor(x, dtype=torch.float32).to(self.device)
                         output_np = True
                     else:
+                        x = x.to(self.device)
                         output_np = False
-                    nn_inputs = (x - self.normalizer['input_ave']) / self.normalizer['input_std']
+                    nn_inputs = self.input_normalizer.transform(x)
                     nn_outputs = self.nn(nn_inputs)
-                    outputs = nn_outputs * self.normalizer['output_std'] + self.normalizer['output_ave']
+                    outputs = self.output_normalizer.inverse_transform(nn_outputs)
                     if output_np:
                         return outputs.cpu().numpy()
                     else:
@@ -159,6 +161,7 @@ class NNPredictor(AbstractPredictor):
                         x = torch.tensor(x, dtype=torch.float32).to(self.device)
                         output_np = True
                     else:
+                        x = x.to(self.device)
                         output_np = False
                     nn_outputs = self.nn(x)
                     if output_np:
@@ -183,8 +186,14 @@ class NNPredictor(AbstractPredictor):
                 raise ValueError('Normalizer is not found. Please set to load_normalizer = False.')
             self.normalizer = torch.load(f'{self.model_path}\\normalizer.pth', weights_only=False,
                                          map_location=self.device_name)
+            self.input_normalizer = AbstractNormalizer.from_config_dict(self.normalizer['input_normalizer']).to(self.device)
+            self.output_normalizer = AbstractNormalizer.from_config_dict(
+                self.normalizer['output_normalizer']
+            ).to(self.device)
         else:
             self.normalizer = None
+            self.input_normalizer = None
+            self.output_normalizer = None
 
     def __call__(self, x: torch.Tensor | np.ndarray):
         return self.model(x)

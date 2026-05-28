@@ -1,8 +1,13 @@
-import tkinter as tk
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from pathlib import Path
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError as e:
+    raise ImportError(
+        'Plotting utilities require matplotlib. '
+        'Install it with `pip install murakami_lab_modules[plot]`.'
+    ) from e
 
 
 class Plotter:
@@ -17,7 +22,7 @@ class Plotter:
 
     def __init__(
             self,
-            window_name: str = 'window',
+            window_name: str = '',
             fig_size: tuple[float, float] = (8.0, 6.0),
             main_font_size: float = 18.0,
             sub_font_size: float = 14.0,
@@ -27,9 +32,9 @@ class Plotter:
             plot_line_width: int = 3,
             cmap_name: str = 'nipy_spectral',
             n_data: int = 5,
-            change_color: bool = True,
-            change_shape: bool = False,
-            change_style: bool = False,
+            cycle_color: bool = True,
+            cycle_marker: bool = True,
+            cycle_line_style: bool = False,
             background_color: str = '#ffffff',
             sub_background_color: str = '#f2f2f2',
             line_darkness: float = 0.8,
@@ -45,34 +50,44 @@ class Plotter:
         self.marker_size = marker_size
         self.plot_line_width = plot_line_width
         self.cmap_name = cmap_name
+        if n_data < 1:
+            raise ValueError(f'n_data must be >= 1. {n_data} was given.')
         self.n_data = n_data
-        self.change_color = change_color
-        self.change_shape = change_shape
-        self.change_style = change_style
+        self.cycle_color = cycle_color
+        self.cycle_marker = cycle_marker
+        self.cycle_line_style = cycle_line_style
         self.background_color = background_color
         self.sub_background_color = sub_background_color
         self.line_darkness = line_darkness
         self.transparent_background = transparent_background
 
         if self.window_name:
+            try:
+                import tkinter as tk
+                from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            except ImportError as e:
+                raise ImportError(
+                    "Interactive Plotter windows require tkinter and matplotlib's TkAgg backend. "
+                    "Use window_name='' for file-only plotting."
+                ) from e
             self.root = tk.Tk()
             self.root.title(self.window_name)
+            self._figure_canvas_cls = FigureCanvasTkAgg
         else:
             self.root = None
+            self._figure_canvas_cls = None
         self._init_figure()
 
-        self.color_idx = 0
-        self.shape_idx = 0
-        self.style_idx = 0
-        self.z_order = 1
+        self.series_idx = 0
+        self.base_z_order = 1
 
     def _init_figure(self):
-        mpl.rcParams['font.family'] = self.font_type
+        plt.rcParams['font.family'] = self.font_type
         plt.rcParams['mathtext.fontset'] = 'stix'
         plt.rcParams['axes.linewidth'] = self.main_line_width
         self.fig, self.ax = plt.subplots(figsize=self.fig_size)
         if self.root is not None:
-            self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+            self.canvas = self._figure_canvas_cls(self.fig, master=self.root)
             self.canvas.get_tk_widget().pack()
 
         self.ax.tick_params(
@@ -90,28 +105,33 @@ class Plotter:
         self.ax.patch.set_alpha(1.0)
         self.cmap = plt.get_cmap(self.cmap_name)
 
-    def _finish_plot(
-            self,
-            plot_type: str,
-            change_color: bool,
-            change_style: bool,
-            change_shape: bool
-    ):
-        self.z_order += 1
-        if self.change_color or change_color:
-            self.color_idx = (self.color_idx + 1) % self.n_data
-        if plot_type == 'plot' or plot_type == 'plot_and_scatter':
-            if self.change_style or change_style:
-                self.style_idx = (self.style_idx + 1) % len(self.style_list)
-        elif plot_type == 'scatter' or plot_type == 'plot_and_scatter':
-            if self.change_shape or change_shape:
-                self.shape_idx = (self.shape_idx + 1) % len(self.shape_list)
-
-    def _get_color(self, is_line: bool):
+    def _get_color(self, series: int, is_line: bool):
+        color_idx = series % self.n_data if self.cycle_color else 0
         if is_line:
-            return [c * self.line_darkness for c in self.cmap(1 - (self.color_idx + 0.5) / self.n_data)[:3]]
+            return [c * self.line_darkness for c in self.cmap(1 - (color_idx + 0.5) / self.n_data)[:3]]
         else:
-            return [c for c in self.cmap(1 - (self.color_idx + 0.5) / self.n_data)[:3]]
+            return [c for c in self.cmap(1 - (color_idx + 0.5) / self.n_data)[:3]]
+
+    def _get_marker(self, series: int):
+        marker_idx = series % len(self.shape_list) if self.cycle_marker else 0
+        return self.shape_list[marker_idx]
+
+    def _get_line_style(self, series: int):
+        style_idx = series % len(self.style_list) if self.cycle_line_style else 0
+        return self.style_list[style_idx]
+
+    def _get_series(self, series: int = None) -> tuple[int, bool]:
+        if series is None:
+            return self.series_idx, True
+        if type(series) is not int:
+            raise TypeError(f'series must be int or None. {type(series)} was given.')
+        if series < 0:
+            raise ValueError(f'series must be non-negative. {series} was given.')
+        return series, False
+
+    def _finish_series(self, advance_series: bool):
+        if advance_series:
+            self.series_idx += 1
 
     def plot(
             self,
@@ -122,18 +142,19 @@ class Plotter:
             line_width: int = None,
             line_style: int | tuple | str = None,
             alpha: float = 0.8,
-            change_color: bool = False,
-            change_style: bool = False,
+            series: int = None,
             **kwargs
     ):
+        series, advance_series = self._get_series(series)
         if color is None:
-            color = self._get_color(is_line=True)
+            color = self._get_color(series, is_line=True)
         if line_style is None:
-            line_style = self.style_list[self.style_idx]
+            line_style = self._get_line_style(series)
         elif type(line_style) is int:
             line_style = self.style_list[line_style]
         if line_width is None:
             line_width = self.plot_line_width
+        z_order = self.base_z_order + series
 
         self.ax.plot(
             x, y,
@@ -141,17 +162,12 @@ class Plotter:
             color=color,
             linewidth=line_width,
             linestyle=line_style,
-            zorder=self.z_order,
+            zorder=z_order,
             alpha=alpha,
             **kwargs
         )
 
-        self._finish_plot(
-            'plot_and_scatter',
-            change_color=change_color,
-            change_style=change_style,
-            change_shape=False
-        )
+        self._finish_series(advance_series)
 
     def scatter(
             self,
@@ -164,25 +180,24 @@ class Plotter:
             marker: int | str = None,
             marker_size: float = None,
             alpha: float = 0.8,
-            change_color: bool = False,
-            change_shape: bool = False,
+            series: int = None,
             **kwargs
     ):
+        series, advance_series = self._get_series(series)
         if color is None:
-            color = self._get_color(is_line=False)
+            color = self._get_color(series, is_line=False)
         if marker is None:
-            marker = self.shape_list[self.shape_idx]
-        if marker_size is None:
-            marker_size = self.marker_size
+            marker = self._get_marker(series)
         elif type(marker) is int:
             marker = self.shape_list[marker]
+        if marker_size is None:
+            marker_size = self.marker_size
+        z_order = self.base_z_order + series
 
         if x_err is not None:
-            self.ax.errorbar(x, y, xerr=x_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
-            self.z_order += 1
+            self.ax.errorbar(x, y, xerr=x_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=z_order)
         if y_err is not None:
-            self.ax.errorbar(x, y, yerr=y_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
-            self.z_order += 1
+            self.ax.errorbar(x, y, yerr=y_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=z_order)
 
         if alpha == 1.0:
             self.ax.scatter(
@@ -193,7 +208,7 @@ class Plotter:
                 linewidths=self.main_line_width,
                 label=label,
                 marker=marker,
-                zorder=self.z_order,
+                zorder=z_order,
                 **kwargs
             )
         else:
@@ -204,7 +219,7 @@ class Plotter:
                 alpha=alpha,
                 linewidths=0,
                 marker=marker,
-                zorder=self.z_order,
+                zorder=z_order,
                 **kwargs
             )
             self.ax.scatter(
@@ -215,7 +230,7 @@ class Plotter:
                 linewidths=self.main_line_width,
                 alpha=1.0,
                 marker=marker,
-                zorder=self.z_order,
+                zorder=z_order,
                 **kwargs
             )
             self.ax.scatter(
@@ -226,16 +241,11 @@ class Plotter:
                 edgecolors='k',
                 linewidths=self.main_line_width,
                 marker=marker,
-                zorder=self.z_order,
+                zorder=z_order,
                 **kwargs
             )
 
-        self._finish_plot(
-            'plot_and_scatter',
-            change_color=change_color,
-            change_style=False,
-            change_shape=change_shape
-        )
+        self._finish_series(advance_series)
 
     def plot_and_scatter(
             self,
@@ -250,34 +260,32 @@ class Plotter:
             marker_size: float = None,
             line_style: int | tuple | str = None,
             line_width: int = None,
-            change_color: bool = False,
-            change_style: bool = False,
-            change_shape: bool = False,
+            series: int = None,
             **kwargs
     ):
+        series, advance_series = self._get_series(series)
         if line_color is None:
-            line_color = self._get_color(is_line=True)
+            line_color = self._get_color(series, is_line=True)
         if face_color is None:
-            face_color = self._get_color(is_line=False)
+            face_color = self._get_color(series, is_line=False)
         if marker is None:
-            marker = self.shape_list[self.shape_idx]
-        if marker_size is None:
-            marker_size = self.marker_size
+            marker = self._get_marker(series)
         elif type(marker) is int:
             marker = self.shape_list[marker]
+        if marker_size is None:
+            marker_size = self.marker_size
         if line_style is None:
-            line_style = self.style_list[self.style_idx]
+            line_style = self._get_line_style(series)
         elif type(line_style) is int:
             line_style = self.style_list[line_style]
         if line_width is None:
             line_width = self.plot_line_width
+        z_order = self.base_z_order + series
 
         if x_err is not None:
-            self.ax.errorbar(x, y, x_err=x_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
-            self.z_order += 1
+            self.ax.errorbar(x, y, xerr=x_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=z_order)
         if y_err is not None:
-            self.ax.errorbar(x, y, yerr=y_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=self.z_order)
-            self.z_order += 1
+            self.ax.errorbar(x, y, yerr=y_err, color='k', elinewidth=1, capsize=4, fmt='none', zorder=z_order)
 
         self.ax.plot(
             x, y,
@@ -289,28 +297,19 @@ class Plotter:
             color=line_color,
             linewidth=line_width,
             linestyle=line_style,
-            zorder=self.z_order,
+            zorder=z_order,
             **kwargs
         )
-        self.z_order += 1
 
-        self._finish_plot(
-            'plot_and_scatter',
-            change_color=change_color,
-            change_style=change_style,
-            change_shape=change_shape
-        )
+        self._finish_series(advance_series)
 
     def remove_plots(self, reset_idx: bool = True):
-        for line in self.ax.lines:
+        for line in list(self.ax.lines):
             line.remove()
-        for collection in self.ax.collections:
+        for collection in list(self.ax.collections):
             collection.remove()
         if reset_idx:
-            self.color_idx = 0
-            self.shape_idx = 0
-            self.style_idx = 0
-            self.z_order = 1
+            self.series_idx = 0
 
     def add_details(
             self,
@@ -371,14 +370,20 @@ class Plotter:
         self.fig.tight_layout()
 
     def update(self):
+        if self.root is None:
+            self.fig.canvas.draw_idle()
+            return
         self.canvas.draw()
         self.root.update()
 
     def set_aspect(self, aspect: str | float, adjustable: str = None, anchor: str = None, share: bool = False):
         self.ax.set_aspect(aspect, adjustable=adjustable, anchor=anchor, share=share)
 
-    def save_fig(self, name: str):
-        self.fig.savefig(f'{name}.png', transparent=self.transparent_background)
+    def save_fig(self, save_path: str | Path):
+        save_path = Path(save_path)
+        if save_path.suffix == '':
+            save_path = save_path.with_suffix('.png')
+        self.fig.savefig(save_path, transparent=self.transparent_background)
 
     @staticmethod
     def display():

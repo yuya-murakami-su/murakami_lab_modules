@@ -2,6 +2,7 @@ import torch
 import pandas as pd
 import numpy as np
 from . import utils
+from .normalizer import AbstractNormalizer, StandardNormalizer
 
 IndexLike = torch.Tensor | np.ndarray
 
@@ -14,15 +15,18 @@ class DataHandler:
     def __init__(
             self,
             input_data_path: str,
-            input_idx: list[int | str],
-            output_idx: list[int | str],
-            batch_size: int,
-            device_name: str,
+            input_idx: list[int | str] = None,
+            output_idx: list[int | str] = None,
+            batch_size: int = None,
+            device_name: str = 'cpu',
             label_data_path: str = None,
             label_idx: list[int | str] = None,
             output_data_path: str = None,
-            unnormalized_input_idx: list[int] = None,
-            unnormalized_output_idx: list[int] = None,
+            input_key: str = None,
+            output_key: str = None,
+            label_key: str = None,
+            input_normalizer: AbstractNormalizer = None,
+            output_normalizer: AbstractNormalizer = None,
             split_type: str = 'random_split',
             is_validation_data_batched: bool = False,
             use_train_as_valid: bool = False,
@@ -39,10 +43,13 @@ class DataHandler:
         self.input_idx = input_idx
         self.output_idx = output_idx
         self.label_idx = label_idx
+        self.input_key = input_key
+        self.output_key = output_key
+        self.label_key = label_key
         self.batch_size = batch_size
         self.device_name = device_name
-        self.unnormalized_input_idx = unnormalized_input_idx
-        self.unnormalized_output_idx = unnormalized_output_idx
+        self.input_normalizer = input_normalizer or StandardNormalizer()
+        self.output_normalizer = output_normalizer or StandardNormalizer()
         self.split_type = split_type
         self.is_validation_data_batched = is_validation_data_batched
         self.use_train_as_valid = use_train_as_valid
@@ -84,8 +91,11 @@ class DataHandler:
             'label_data_path': self.label_data_path,
             'label_idx': self.label_idx,
             'output_data_path': self.output_data_path,
-            'unnormalized_input_idx': self.unnormalized_input_idx,
-            'unnormalized_output_idx': self.unnormalized_output_idx,
+            'input_key': self.input_key,
+            'output_key': self.output_key,
+            'label_key': self.label_key,
+            'input_normalizer': self.input_normalizer.config_dict(),
+            'output_normalizer': self.output_normalizer.config_dict(),
             'split_type': self.split_type,
             'is_validation_data_batched': self.is_validation_data_batched,
             'use_train_as_valid': self.use_train_as_valid,
@@ -96,12 +106,12 @@ class DataHandler:
         })
 
     def _load_datafiles(self):
-        self.inputs = self._load_datafile(self.input_data_path, self.input_idx, self.csv_encoding)
-        self.outputs = self._load_datafile(self.output_data_path, self.output_idx, self.csv_encoding)
-        if self.label_idx is None:
+        self.inputs = self._load_datafile(self.input_data_path, self.input_idx, self.input_key, self.csv_encoding)
+        self.outputs = self._load_datafile(self.output_data_path, self.output_idx, self.output_key, self.csv_encoding)
+        if self.label_idx is None and self.label_key is None:
             self.labels = np.arange(self.inputs.shape[0]).reshape(-1, 1)
         else:
-            self.labels = self._load_label_file(self.label_data_path, self.label_idx, self.csv_encoding)
+            self.labels = self._load_label_file(self.label_data_path, self.label_idx, self.label_key, self.csv_encoding)
         self._validate_data_lengths()
 
     def _validate_data_lengths(self):
@@ -142,77 +152,121 @@ class DataHandler:
         )
 
     @staticmethod
-    def _load_datafile(data_path: str, indices: list[int | str], csv_encoding: str = None) -> torch.Tensor:
-        if data_path[-4:] == '.csv':
-            data_df = DataHandler._read_csv(data_path, encoding=csv_encoding)
-            if type(indices[0]) is str:
-                loaded = torch.tensor(data_df.loc[:, indices].to_numpy(), dtype=torch.float32)
-            else:
-                loaded = torch.tensor(data_df.iloc[:, indices].to_numpy(), dtype=torch.float32)
-        elif data_path[-4:] == '.pth':
-            loaded = torch.load(data_path, weights_only=True).to(torch.float32)[:, indices]
+    def _load_raw_file(data_path: str, csv_encoding: str = None):
+        if data_path.endswith('.csv'):
+            return DataHandler._read_csv(data_path, encoding=csv_encoding)
+        elif data_path.endswith(('.pth', '.pt')):
+            return torch.load(data_path, weights_only=False)
+        elif data_path.endswith('.npy'):
+            return np.load(data_path, allow_pickle=True)
+        elif data_path.endswith('.npz'):
+            return dict(np.load(data_path, allow_pickle=True))
         else:
-            raise NotImplementedError
-        return loaded
+            raise NotImplementedError(f'Unsupported data file format: {data_path}')
 
     @staticmethod
-    def _load_label_file(data_path: str, indices: list[int | str], csv_encoding: str = None) -> np.ndarray:
-        if data_path[-4:] == '.csv':
-            data_df = DataHandler._read_csv(data_path, encoding=csv_encoding)
+    def _select_key(raw_data, key: str, data_path: str):
+        if isinstance(raw_data, pd.DataFrame):
+            return raw_data
+
+        if isinstance(raw_data, np.ndarray) and raw_data.shape == () and isinstance(raw_data.item(), dict):
+            raw_data = raw_data.item()
+
+        if isinstance(raw_data, dict):
+            if key is None:
+                if len(raw_data) == 1:
+                    return next(iter(raw_data.values()))
+                available_keys = ', '.join(map(str, raw_data.keys()))
+                raise ValueError(f'key must be specified for dict-like data in {data_path}. Available keys: {available_keys}')
+            if key not in raw_data:
+                available_keys = ', '.join(map(str, raw_data.keys()))
+                raise KeyError(f'{key} was not found in {data_path}. Available keys: {available_keys}')
+            return raw_data[key]
+
+        if key is not None:
+            raise ValueError(f'key={key} was given, but {data_path} does not contain dict-like data.')
+        return raw_data
+
+    @staticmethod
+    def _as_2d_array(data):
+        if torch.is_tensor(data):
+            if data.ndim == 1:
+                data = data.reshape(-1, 1)
+            return data
+        data = np.asarray(data)
+        if data.ndim == 1:
+            data = data.reshape(-1, 1)
+        return data
+
+    @staticmethod
+    def _select_columns(data, indices: list[int | str] = None):
+        if isinstance(data, pd.DataFrame):
+            if indices is None:
+                return data.to_numpy()
+            if len(indices) == 0:
+                raise ValueError('indices must not be empty.')
             if type(indices[0]) is str:
-                return data_df.loc[:, indices].to_numpy()
-            return data_df.iloc[:, indices].to_numpy()
-        elif data_path[-4:] == '.pth':
-            loaded = torch.load(data_path, weights_only=False)
-            if torch.is_tensor(loaded):
-                return loaded[:, indices].detach().cpu().numpy()
-            return np.asarray(loaded)[:, indices]
-        else:
-            raise NotImplementedError
+                return data.loc[:, indices].to_numpy()
+            return data.iloc[:, indices].to_numpy()
+
+        data = DataHandler._as_2d_array(data)
+        if indices is None:
+            return data
+        if len(indices) == 0:
+            raise ValueError('indices must not be empty.')
+        if type(indices[0]) is str:
+            raise TypeError('String column indices are only supported for CSV data. Use key for dict-like data.')
+        return data[:, indices]
+
+    @staticmethod
+    def _to_feature_tensor(data) -> torch.Tensor:
+        if torch.is_tensor(data):
+            if data.ndim == 1:
+                data = data.reshape(-1, 1)
+            return data.to(dtype=torch.float32)
+        data = np.asarray(data)
+        if data.ndim == 1:
+            data = data.reshape(-1, 1)
+        return torch.tensor(data, dtype=torch.float32)
+
+    @staticmethod
+    def _to_label_array(data) -> np.ndarray:
+        if torch.is_tensor(data):
+            data = data.detach().cpu().numpy()
+        data = np.asarray(data)
+        if data.ndim == 1:
+            data = data.reshape(-1, 1)
+        return data
+
+    @staticmethod
+    def _load_datafile(
+            data_path: str,
+            indices: list[int | str] = None,
+            key: str = None,
+            csv_encoding: str = None
+    ) -> torch.Tensor:
+        raw_data = DataHandler._load_raw_file(data_path, csv_encoding=csv_encoding)
+        selected = DataHandler._select_key(raw_data, key=key, data_path=data_path)
+        selected = DataHandler._select_columns(selected, indices=indices)
+        return DataHandler._to_feature_tensor(selected)
+
+    @staticmethod
+    def _load_label_file(
+            data_path: str,
+            indices: list[int | str] = None,
+            key: str = None,
+            csv_encoding: str = None
+    ) -> np.ndarray:
+        raw_data = DataHandler._load_raw_file(data_path, csv_encoding=csv_encoding)
+        selected = DataHandler._select_key(raw_data, key=key, data_path=data_path)
+        selected = DataHandler._select_columns(selected, indices=indices)
+        return DataHandler._to_label_array(selected)
 
     def _normalize_data(self):
-        self._input_normalizer()
-        if not hasattr(self, 'normed_inputs'):
-            self.normed_inputs = self.inputs.clone()
-        self._output_normalizer()
-        if not hasattr(self, 'normed_outputs'):
-            self.normed_outputs = self.outputs.clone()
-
-    def _input_normalizer(self):
-        self.normed_inputs, self.input_ave, self.input_std = (
-            self._default_normalizer(self.inputs, self.unnormalized_input_idx))
-
-    def _output_normalizer(self):
-        self.normed_outputs, self.output_ave, self.output_std = (
-            self._default_normalizer(self.outputs, self.unnormalized_output_idx))
-
-    def _default_normalizer(
-            self,
-            data: torch.Tensor,
-            avoid_indices: list[int] | None
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        ave = data.mean(dim=0, keepdim=True)
-        std = data.std(dim=0, keepdim=True)
-
-        if torch.lt(std, 1e-5).any():
-            std = torch.where(torch.lt(std, 1e-5), 1, std)
-            if not self.__class__._std_warned:
-                utils.logging('STD < 1e-5 was found!')
-                self.__class__._std_warned = True
-
-        if avoid_indices is not None:
-            ave[:, avoid_indices] = 0
-            std[:, avoid_indices] = 1
-
-        normalized = (data - ave) / std
-
-        return normalized, ave, std
-
-    @staticmethod
-    def _normalize_with_stats(data: torch.Tensor, ave: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
-        if data.numel() == 0:
-            return data
-        return (data - ave) / std
+        self.input_normalizer.fit(self.inputs)
+        self.output_normalizer.fit(self.outputs)
+        self.normed_inputs = self.input_normalizer.transform(self.inputs)
+        self.normed_outputs = self.output_normalizer.transform(self.outputs)
 
     def _warn_new_normalizer(self):
         if not self.__class__._new_normalizer_warned:
@@ -223,28 +277,25 @@ class DataHandler:
             self.__class__._new_normalizer_warned = True
 
     def _normalize_split_data(self):
-        normed_train_inputs, self.input_ave, self.input_std = self._default_normalizer(
-            self.train.inputs,
-            self.unnormalized_input_idx
-        )
-        normed_train_outputs, self.output_ave, self.output_std = self._default_normalizer(
-            self.train.outputs,
-            self.unnormalized_output_idx
-        )
+        self.input_normalizer.fit(self.train.inputs)
+        self.output_normalizer.fit(self.train.outputs)
 
-        self.normed_inputs = self._normalize_with_stats(self.dataset.inputs, self.input_ave, self.input_std)
-        self.normed_outputs = self._normalize_with_stats(self.dataset.outputs, self.output_ave, self.output_std)
+        normed_train_inputs = self.input_normalizer.transform(self.train.inputs)
+        normed_train_outputs = self.output_normalizer.transform(self.train.outputs)
+
+        self.normed_inputs = self.input_normalizer.transform(self.dataset.inputs)
+        self.normed_outputs = self.output_normalizer.transform(self.dataset.outputs)
 
         self.dataset = Dataset(self.normed_inputs, self.normed_outputs, self.dataset.labels)
         self.train = Dataset(normed_train_inputs, normed_train_outputs, self.train.labels)
         self.valid = Dataset(
-            self._normalize_with_stats(self.valid.inputs, self.input_ave, self.input_std),
-            self._normalize_with_stats(self.valid.outputs, self.output_ave, self.output_std),
+            self.input_normalizer.transform(self.valid.inputs),
+            self.output_normalizer.transform(self.valid.outputs),
             self.valid.labels
         )
         self.test = Dataset(
-            self._normalize_with_stats(self.test.inputs, self.input_ave, self.input_std),
-            self._normalize_with_stats(self.test.outputs, self.output_ave, self.output_std),
+            self.input_normalizer.transform(self.test.inputs),
+            self.output_normalizer.transform(self.test.outputs),
             self.test.labels
         )
         self.datasets = {'all': self.dataset}
@@ -320,23 +371,21 @@ class DataHandler:
         self.n_batch = {key: self.data_loader[key].n_batch for key in self.data_loader.keys()}
 
     def normalize_x(self, x: torch.Tensor):
-        return (x - self.input_ave) / self.input_std
+        return self.input_normalizer.transform(x)
 
     def normalize_y(self, y: torch.Tensor):
-        return (y - self.output_ave) / self.output_std
+        return self.output_normalizer.transform(y)
 
     def undo_normalize_x(self, x: torch.Tensor):
-        return x * self.input_std + self.input_ave
+        return self.input_normalizer.inverse_transform(x)
 
     def undo_normalize_y(self, y: torch.Tensor):
-        return y * self.output_std + self.output_ave
+        return self.output_normalizer.inverse_transform(y)
 
     def normalizer_dict(self):
         return {
-            'input_ave': self.input_ave,
-            'input_std': self.input_std,
-            'output_ave': self.output_ave,
-            'output_std': self.output_std
+            'input_normalizer': self.input_normalizer.config_dict(),
+            'output_normalizer': self.output_normalizer.config_dict()
         }
 
     def __call__(self, dataset_name: str):

@@ -4,7 +4,9 @@ import torch.nn
 from murakami_lab_modules.data_handler import DataHandler
 from murakami_lab_modules.optimizer import Optimizer
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork, AbstractNeuralNetwork
-from murakami_lab_modules.model_handler import ModelHandler, DataFitting, Regularization
+from murakami_lab_modules.data_fitting import DataFitting
+from murakami_lab_modules.model_handler import ModelHandler
+from murakami_lab_modules.regularization import Regularization
 from murakami_lab_modules.input_generator import InputGenerator
 from murakami_lab_modules.plotter import Plotter
 from murakami_lab_modules.callbacks import LossMonitor
