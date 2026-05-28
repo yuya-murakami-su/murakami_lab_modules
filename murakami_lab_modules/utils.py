@@ -5,7 +5,10 @@ import datetime
 import importlib
 import inspect
 import json
+import logging as py_logging
 from pathlib import Path
+
+logger = py_logging.getLogger('murakami_lab_modules')
 
 
 def initialize_random_seed(seed: int) -> None:
@@ -30,11 +33,10 @@ def get_current_time(for_file_name: bool = False) -> str:
 
 
 def logging(log: str, log_name: str = 'logs.log') -> None:
-    print(f'[{get_current_time()}] {log}')
+    logger.info(log)
     if log_name is not None:
         with open(log_name, 'a', encoding='utf-8_sig') as txt:
             txt.write(f'[{get_current_time()}] {log}\n')
-            txt.close()
 
 
 _device_alart = True

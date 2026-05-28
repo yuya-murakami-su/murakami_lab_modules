@@ -1,12 +1,12 @@
 import time
-import os
 import pandas as pd
 import numpy as np
 import torch
 import copy
 from datetime import datetime
+from pathlib import Path
 from .neural_network import AbstractNeuralNetwork
-from .optimizer import AbstractOptimizer
+from .optimizer import OptimizerBase
 from .data_fitting import DataFitting as _DataFitting
 from .regularization import Regularization as _Regularization
 from . import utils
@@ -18,7 +18,7 @@ class ModelHandler:
     def __init__(
             self,
             nn: AbstractNeuralNetwork,
-            optimizer: AbstractOptimizer,
+            optimizer: OptimizerBase,
             data_fitting: _DataFitting = None,
             regularization: _Regularization = None,
             train_epochs: int = None,
@@ -33,6 +33,7 @@ class ModelHandler:
             random_seed: int = 2025,
             save_result: bool = True,
             save_model: bool = True,
+            restore_best: bool = None,
             verbose: bool = True,
             **kwargs
     ):
@@ -51,8 +52,8 @@ class ModelHandler:
         self.load_optimizer = load_optimizer
         self.random_seed = random_seed
 
-        self.save_path = save_path
-        self.train_record_path = train_record_path
+        self.save_path = Path(save_path)
+        self.train_record_path = Path(train_record_path)
         self.recalculate_valid_loss = recalculate_valid_loss
         self.model_name = model_name
         self.original_model_name = model_name
@@ -60,6 +61,9 @@ class ModelHandler:
         self.callbacks = callbacks or []
         self.save_result = save_result
         self.save_model = save_model
+        self.restore_best = (save_result and save_model) if restore_best is None else bool(restore_best)
+        if not self.save_result or not self.save_model:
+            self.restore_best = False
         self.verbose = verbose
 
         self._validate_inputs()
@@ -86,6 +90,7 @@ class ModelHandler:
             'random_seed': self.random_seed,
             'save_result': self.save_result,
             'save_model': self.save_model,
+            'restore_best': self.restore_best,
             'verbose': self.verbose,
             **self.kwargs
         })
@@ -128,9 +133,9 @@ class ModelHandler:
                 self.model_name = timestamp
             else:
                 self.model_name = f'{timestamp}_{base_model_name}'
-            self.model_path = os.path.join(self.save_path, self.model_name)
+            self.model_path = self.save_path / self.model_name
             try:
-                os.makedirs(self.model_path, exist_ok=False)
+                self.model_path.mkdir(parents=True, exist_ok=False)
                 return
             except FileExistsError:
                 time.sleep(0.001)
@@ -146,23 +151,23 @@ class ModelHandler:
             'data_handler': self.data_fitting.data_handler.config_dict() if self.has_data else None,
             'regularization': self.regularization.config_dict() if self.has_reg else None
         }
-        utils.save_json(f'{self.model_path}\\config.json', config)
+        utils.save_json(self.model_path / 'config.json', config)
 
-        metadata_path = f'{self.model_path}\\metadata'
-        utils.save_json(f'{metadata_path}\\nn.json', config['nn'])
-        utils.save_json(f'{metadata_path}\\optimizer.json', config['optimizer'])
-        utils.save_json(f'{metadata_path}\\model_handler.json', config['model_handler'])
+        metadata_path = self.model_path / 'metadata'
+        utils.save_json(metadata_path / 'nn.json', config['nn'])
+        utils.save_json(metadata_path / 'optimizer.json', config['optimizer'])
+        utils.save_json(metadata_path / 'model_handler.json', config['model_handler'])
         if self.has_data:
-            utils.save_json(f'{metadata_path}\\data_fitting.json', config['data_fitting'])
-            utils.save_json(f'{metadata_path}\\data_handler.json', config['data_handler'])
-            self.data_fitting.data_handler.save_summary(f'{metadata_path}\\data_summary.json')
-            self.data_fitting.data_handler.save_summary(f'{metadata_path}\\data_summary.csv')
+            utils.save_json(metadata_path / 'data_fitting.json', config['data_fitting'])
+            utils.save_json(metadata_path / 'data_handler.json', config['data_handler'])
+            self.data_fitting.data_handler.save_summary(metadata_path / 'data_summary.json')
+            self.data_fitting.data_handler.save_summary(metadata_path / 'data_summary.csv')
             if self.save_model:
-                torch.save(self.data_fitting.data_handler.normalizer_dict(), f'{self.model_path}\\normalizer.pth')
+                torch.save(self.data_fitting.data_handler.normalizer_dict(), self.model_path / 'normalizer.pth')
         if self.has_reg:
-            utils.save_json(f'{metadata_path}\\regularization.json', config['regularization'])
+            utils.save_json(metadata_path / 'regularization.json', config['regularization'])
             for idx, input_generator_ in enumerate(self.regularization.input_generators):
-                utils.save_json(f'{metadata_path}\\input_generator_{idx}.json', input_generator_.config_dict())
+                utils.save_json(metadata_path / f'input_generator_{idx}.json', input_generator_.config_dict())
 
     def _set_model(self):
         self.optimizer.set_parameters(self.nn.parameters())
@@ -178,13 +183,18 @@ class ModelHandler:
                 np.empty([0, len(self.train_record_columns)]),
                 columns=self.train_record_columns
             )
-        elif os.path.exists(f'{self.train_record_path}.csv'):
-            self.train_record = pd.read_csv(f'{self.train_record_path}.csv', index_col=None, encoding='cp932')
+        elif self._train_record_file().exists():
+            self.train_record = pd.read_csv(self._train_record_file(), index_col=None)
         else:
             self.train_record = pd.DataFrame(
                 np.empty([0, len(self.train_record_columns)]),
                 columns=self.train_record_columns
             )
+
+    def _train_record_file(self) -> Path:
+        if self.train_record_path.suffix:
+            return self.train_record_path
+        return self.train_record_path.with_suffix('.csv')
 
     def _prepare_train_valuables(self):
         self.epoch = 0
@@ -266,40 +276,78 @@ class ModelHandler:
 
         if self.has_data:
             if self.has_reg:
-                losses = []
-                batch_sizes = []
-                for x, y, label in self.data_fitting.data_handler(phase):
-                    losses.append(self._data_reg_step(x, y, label, phase=phase))
-                    batch_sizes.append(len(x))
-                return self._average_data_reg_losses(losses, batch_sizes)
+                return self._collect_data_reg_losses(phase)
             else:
-                losses = []
-                batch_sizes = []
-                for x, y, label in self.data_fitting.data_handler(phase):
-                    losses.append(self._data_step(x, y, label, phase=phase))
-                    batch_sizes.append(len(x))
-                return self._average_data_losses(losses, batch_sizes)
+                return self._collect_data_losses(phase)
         else:
             return self._reg_step()
 
-    def _average_data_losses(self, losses: list[dict], batch_sizes: list[int]) -> dict[str, object]:
-        n_data = sum(batch_sizes)
+    @staticmethod
+    def _detach_loss(value) -> torch.Tensor:
+        if torch.is_tensor(value):
+            return value.detach()
+        return torch.as_tensor(value, dtype=torch.float32)
+
+    @staticmethod
+    def _to_float(value) -> float:
+        if torch.is_tensor(value):
+            return float(value.detach().cpu().item())
+        return float(value)
+
+    @classmethod
+    def _add_loss(cls, current: torch.Tensor | None, value) -> torch.Tensor:
+        value = cls._detach_loss(value)
+        if current is None:
+            return value.clone()
+        return current + value
+
+    @classmethod
+    def _add_weighted_loss(cls, current: torch.Tensor | None, value, weight: int) -> torch.Tensor:
+        return cls._add_loss(current, cls._detach_loss(value) * weight)
+
+    def _collect_data_losses(self, phase: str) -> dict[str, object]:
+        total_sum = None
+        data_sum = None
+        n_data = 0
+        for x, y, label in self.data_fitting.data_handler(phase):
+            loss = self._data_step(x, y, label, phase=phase)
+            batch_size = len(x)
+            total_sum = self._add_weighted_loss(total_sum, loss['total'], batch_size)
+            data_sum = self._add_weighted_loss(data_sum, loss['data'], batch_size)
+            n_data += batch_size
+        if n_data == 0:
+            raise ValueError(f'Dataset for phase={phase} is empty.')
         return {
-            'total': sum(loss['total'] * n for loss, n in zip(losses, batch_sizes)) / n_data,
-            'data': sum(loss['data'] * n for loss, n in zip(losses, batch_sizes)) / n_data
+            'total': self._to_float(total_sum / n_data),
+            'data': self._to_float(data_sum / n_data)
         }
 
-    def _average_data_reg_losses(self, losses: list[dict], batch_sizes: list[int]) -> dict[str, object]:
-        n_data = sum(batch_sizes)
-        averaged = {
-            'total': sum(loss['total'] * n for loss, n in zip(losses, batch_sizes)) / n_data,
-            'data': sum(loss['data'] * n for loss, n in zip(losses, batch_sizes)) / n_data,
-            'reg': float(np.mean([loss['reg'] for loss in losses])),
-            'terms': {}
+    def _collect_data_reg_losses(self, phase: str) -> dict[str, object]:
+        total_sum = None
+        data_sum = None
+        reg_sum = None
+        term_sum = None
+        n_data = 0
+        n_batch = 0
+        for x, y, label in self.data_fitting.data_handler(phase):
+            loss = self._data_reg_step(x, y, label, phase=phase)
+            batch_size = len(x)
+            total_sum = self._add_weighted_loss(total_sum, loss['total'], batch_size)
+            data_sum = self._add_weighted_loss(data_sum, loss['data'], batch_size)
+            reg_sum = self._add_loss(reg_sum, loss['reg'])
+            term_sum = self._add_loss(term_sum, loss['terms'])
+            n_data += batch_size
+            n_batch += 1
+        if n_data == 0 or n_batch == 0:
+            raise ValueError(f'Dataset for phase={phase} is empty.')
+
+        terms = term_sum / n_batch
+        return {
+            'total': self._to_float(total_sum / n_data),
+            'data': self._to_float(data_sum / n_data),
+            'reg': self._to_float(reg_sum / n_batch),
+            'terms': self._regularization_terms_to_dict(terms)
         }
-        for name in self.regularization.reg_names:
-            averaged['terms'][name] = float(np.mean([loss['terms'][name] for loss in losses]))
-        return averaged
 
     def _data_reg_step(self, x: torch.Tensor, y: torch.Tensor, label, phase: str):
         if phase == 'train':
@@ -312,7 +360,6 @@ class ModelHandler:
                 phase=phase,
                 epoch=self.epoch
             )
-            data_loss = data_loss_info['total'].item()
 
             reg_mean, reg_loss = self.regularization.get_regularization_value(
                 nn=self.nn,
@@ -324,15 +371,14 @@ class ModelHandler:
                 loss = data_loss_info['total'] * reg_loss
             else:
                 loss = data_loss_info['total'] + reg_loss
-            reg_loss, reg_mean = reg_loss.item(), reg_mean.detach().cpu().numpy()
 
             loss.backward()
             self.optimizer.step(self.epoch)
             return {
-                'total': loss.item(),
-                'data': data_loss,
-                'reg': reg_loss,
-                'terms': self._regularization_terms_to_dict(reg_mean)
+                'total': loss.detach(),
+                'data': data_loss_info['total'].detach(),
+                'reg': reg_loss.detach(),
+                'terms': reg_mean.detach()
             }
 
         else:
@@ -345,7 +391,7 @@ class ModelHandler:
                     phase=phase,
                     epoch=self.epoch
                 )
-                data_loss = data_loss_info['total'].item()
+                data_loss = data_loss_info['total'].detach()
 
             reg_mean, reg_loss = self.regularization.get_regularization_value(
                 nn=self.nn,
@@ -353,16 +399,15 @@ class ModelHandler:
                 epoch=self.epoch,
                 data_loss=data_loss
             )
-            reg_loss, reg_mean = reg_loss.item(), reg_mean.detach().cpu().numpy()
             if self.regularization.use_reg_prod:
                 loss = data_loss * reg_loss
             else:
                 loss = data_loss + reg_loss
             return {
-                'total': loss,
+                'total': loss.detach(),
                 'data': data_loss,
-                'reg': reg_loss,
-                'terms': self._regularization_terms_to_dict(reg_mean)
+                'reg': reg_loss.detach(),
+                'terms': reg_mean.detach()
             }
 
     def _data_step(self, x: torch.Tensor, y: torch.Tensor, label, phase: str):
@@ -379,10 +424,9 @@ class ModelHandler:
             loss = loss_info['total']
             loss.backward()
             self.optimizer.step(self.epoch)
-            data_loss = loss_info['terms']['data'].item()
             return {
-                'total': loss.item(),
-                'data': data_loss
+                'total': loss.detach(),
+                'data': loss_info['terms']['data'].detach()
             }
 
         else:
@@ -395,10 +439,9 @@ class ModelHandler:
                     phase=phase,
                     epoch=self.epoch
                 )
-                data_loss = loss_info['terms']['data'].item()
             return {
-                'total': loss_info['total'].item(),
-                'data': data_loss
+                'total': loss_info['total'].detach(),
+                'data': loss_info['terms']['data'].detach()
             }
 
     def _reg_step(self):
@@ -406,15 +449,16 @@ class ModelHandler:
         reg_mean, loss = self.regularization.get_regularization_value(nn=self.nn, epoch=self.epoch)
         loss.backward()
         self.optimizer.step(self.epoch)
-        reg_loss, reg_mean = loss.item(), reg_mean.detach().cpu().numpy()
         return {
-            'total': reg_loss,
+            'total': self._to_float(loss),
             'terms': self._regularization_terms_to_dict(reg_mean)
         }
 
-    def _regularization_terms_to_dict(self, reg_mean: np.ndarray) -> dict[str, float]:
+    def _regularization_terms_to_dict(self, reg_mean) -> dict[str, float]:
+        if torch.is_tensor(reg_mean):
+            reg_mean = reg_mean.detach().cpu()
         return {
-            name: value.item() if hasattr(value, 'item') else float(value)
+            name: self._to_float(value)
             for name, value in zip(self.regularization.reg_names, reg_mean)
         }
 
@@ -423,7 +467,8 @@ class ModelHandler:
         if self.best_loss is None or self.best_loss > current_loss:
             self.best_loss = current_loss
             self.best_updated = 0
-            self.state_dicts = self._get_state_dicts()
+            if self.restore_best:
+                self.state_dicts = self._get_state_dicts()
         else:
             self.best_updated += 1
 
@@ -515,13 +560,14 @@ class ModelHandler:
     def _post_train_treatments(self):
         if self.verbose:
             print('')
-        self._load_state_dicts()
+        if self.restore_best and self.state_dicts is not None:
+            self._load_state_dicts()
         self._save_model()
         self._save_train_record()
 
     def _load_state_dicts(self, from_outside: bool = False, load_optimizer: bool = False):
         if from_outside:
-            state_dicts = torch.load(f'{self.load_model}\\state_dicts.pth', weights_only=False)
+            state_dicts = torch.load(Path(self.load_model) / 'state_dicts.pth', weights_only=True)
         else:
             state_dicts = copy.deepcopy(self.state_dicts)
         self.nn.load_state_dict(state_dicts['nn_state_dict'])
@@ -531,11 +577,12 @@ class ModelHandler:
     def _save_model(self):
         if not self.save_result:
             return
-        pd.DataFrame(self.evolution, columns=self.evolution_col).to_csv(f'{self.model_path}\\evolution.csv')
+        pd.DataFrame(self.evolution, columns=self.evolution_col).to_csv(self.model_path / 'evolution.csv')
         if self.has_reg:
-            self.regularization.save_weight_report(f'{self.model_path}\\regularization_weight_report.csv')
+            self.regularization.save_weight_report(self.model_path / 'regularization_weight_report.csv')
         if self.save_model:
-            torch.save(self.state_dicts, f'{self.model_path}\\state_dicts.pth')
+            state_dicts = self.state_dicts if self.state_dicts is not None else self._get_state_dicts()
+            torch.save(state_dicts, self.model_path / 'state_dicts.pth')
 
     def _save_train_record(self):
         if self.has_data and self.data_fitting.check_test:
@@ -553,9 +600,9 @@ class ModelHandler:
 
         train_record = [utils.get_current_time(), self.epoch - self.best_updated, self.best_loss, test_loss]
         df = pd.DataFrame([train_record], columns=self.train_record_columns)
-        df.to_csv(f'{self.model_path}\\train_record.csv', index=False)
+        df.to_csv(self.model_path / 'train_record.csv', index=False)
         self.train_record = pd.concat([self.train_record, df], axis=0)
-        self.train_record.to_csv(f'{self.train_record_path}.csv', index=False)
+        self.train_record.to_csv(self._train_record_file(), index=False)
 
     def _get_state_dicts(self):
         return {

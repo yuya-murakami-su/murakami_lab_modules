@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
 import torch.nn
+from pathlib import Path
 from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.optimizer import ConstantLROptimizer
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
 from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.model_handler import ModelHandler
@@ -12,6 +13,8 @@ from murakami_lab_modules.predictor import NNPredictor
 
 
 def main():
+    data_dir = Path('demo_data')
+    data_dir.mkdir(parents=True, exist_ok=True)
     # Define ground truth / 真の関数の定義
     ground_truth = lambda x: 1 - np.exp(- (2 * x[:, 0] / 25 + 0.3 * (x[:, 1] + 1) ** 2.6)) - x[:, 0] / 250
     x_ground_truth = [
@@ -33,14 +36,16 @@ def main():
     y_data = [ground_truth(x_data[i]) * (1 + (np.random.rand(n_data) - 0.5) * noise_level) for i in range(3)]
 
     # Save dataset for machine learning / 機械学習用のデータセットとして保存
-    pd.DataFrame(np.vstack(x_data), columns=('x1', 'x2')).to_csv('demo_data\\demo_v1_x.csv')
-    pd.DataFrame(np.hstack(y_data)[:, None], columns=('y',)).to_csv('demo_data\\demo_v1_y.csv')
+    x_path = data_dir / 'demo_v1_x.csv'
+    y_path = data_dir / 'demo_v1_y.csv'
+    pd.DataFrame(np.vstack(x_data), columns=('x1', 'x2')).to_csv(x_path, index=False)
+    pd.DataFrame(np.hstack(y_data)[:, None], columns=('y',)).to_csv(y_path, index=False)
 
     # Define data handler for control datasets / データセット制御クラスの定義
     data_handler = DataHandler(
-        input_data_path='demo_data\\demo_v1_x.csv',
+        input_data_path=str(x_path),
         input_idx=['x1', 'x2'],
-        output_data_path='demo_data\\demo_v1_y.csv',
+        output_data_path=str(y_path),
         output_idx=['y'],
         batch_size=8,
         device_name='cpu',
@@ -55,7 +60,7 @@ def main():
     )
 
     # Define optimizer / 最適化アルゴリズムの定義
-    optimizer = Optimizer(
+    optimizer = ConstantLROptimizer(
         algorithm=torch.optim.Adam,
         lr=1e-3
     )

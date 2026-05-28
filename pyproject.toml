@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "murakami_lab_modules"
+version = "1.1.0"
+description = "A PyTorch-based toolkit for neural-network fitting and PINN-style regularization."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+  {name = "Yuya Murakami", email = "murakami.yuhya@cii.shizuoka.ac.jp"},
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+  "numpy>=1.26.0",
+  "pandas>=2.2.0",
+  "torch>=2.0.0",
+]
+
+[project.optional-dependencies]
+plot = [
+  "matplotlib>=3.9.0",
+]
+statistics = [
+  "matplotlib>=3.9.0",
+  "scikit-learn>=1.7.2",
+]
+test = [
+  "pytest>=8.0.0",
+]
+all = [
+  "matplotlib>=3.9.0",
+  "scikit-learn>=1.7.2",
+  "pytest>=8.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yuya-murakami-su/murakami_lab_modules"
+Repository = "https://github.com/yuya-murakami-su/murakami_lab_modules"
+
+[tool.setuptools.packages.find]
+include = ["murakami_lab_modules*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

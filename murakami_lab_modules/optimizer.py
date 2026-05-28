@@ -1,32 +1,78 @@
-import torch
-import numpy as np
 from collections.abc import Callable, Iterable
+
+import numpy as np
+import torch
+
 from . import utils
 
+__all__ = [
+    'OptimizerBase',
+    'ConstantLROptimizer',
+    'WarmupOptimizer',
+    'WarmupDecayOptimizer',
+    'InverseTimeDecayOptimizer',
+    'ExponentialDecayOptimizer',
+    'StepDecayOptimizer',
+    'CosineAnnealingOptimizer',
+    'PolynomialDecayOptimizer',
+    'AbstractOptimizer',
+    'Optimizer',
+    'OptimizerWithWarmup',
+    'OptimizerWithWarmupAndDecay',
+    'OptimizerWithInverseDecay',
+]
 
-class AbstractOptimizer:
+
+def _merge_optimizer_params(optimizer_params: dict[str, object] = None, extra_params: dict[str, object] = None):
+    params = dict(optimizer_params or {})
+    params.update(extra_params or {})
+    return params
+
+
+def _validate_positive_int(value: int, name: str) -> None:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f'{name} must be a positive int. {value} was given.')
+
+
+def _validate_non_negative_float(value: float, name: str) -> None:
+    if value < 0:
+        raise ValueError(f'{name} must be non-negative. {value} was given.')
+
+
+def _interpolate_lr(start_lr: float, end_lr: float, progress: float, scale: str) -> float:
+    progress = float(np.clip(progress, 0.0, 1.0))
+    if scale == 'linear':
+        return (end_lr - start_lr) * progress + start_lr
+    if scale in {'exponential', 'log'}:
+        if start_lr <= 0 or end_lr <= 0:
+            raise ValueError('exponential learning-rate interpolation requires positive learning rates.')
+        return float(np.exp(np.log(end_lr / start_lr) * progress) * start_lr)
+    raise ValueError(f"scale must be 'linear' or 'exponential'. {scale} was given.")
+
+
+class OptimizerBase:
     def __init__(
             self,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
-            **kwargs
+            optimizer_params: dict[str, object] = None,
+            **schedule_params
     ):
         self.locals = utils.get_local_dict(locals())
         self.algorithm = algorithm
-        self.kwargs = kwargs
+        self.optimizer_params = dict(optimizer_params or {})
+        self.schedule_params = schedule_params
         self.lr_function = self.get_lr_function()
         self.optimizer = None
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
             'algorithm': self.algorithm,
-            **self.kwargs
+            'optimizer_params': self.optimizer_params,
+            **self.schedule_params,
         })
 
     def set_parameters(self, parameters: Iterable):
-        if 'optimizer_params' in self.kwargs.keys():
-            self.optimizer = self.algorithm(parameters, lr=self.lr_function(0), **self.kwargs['optimizer_params'])
-        else:
-            self.optimizer = self.algorithm(parameters, lr=self.lr_function(0))
+        self.optimizer = self.algorithm(parameters, lr=self.lr_function(0), **self.optimizer_params)
 
     def get_lr_function(self) -> Callable[[int], float]:
         raise NotImplementedError
@@ -43,7 +89,7 @@ class AbstractOptimizer:
         self.optimizer.zero_grad()
 
     def current_lr(self) -> float:
-        return self.optimizer.param_groups[0]["lr"]
+        return self.optimizer.param_groups[0]['lr']
 
     def state_dict(self):
         return self.optimizer.state_dict()
@@ -52,19 +98,20 @@ class AbstractOptimizer:
         self.optimizer.load_state_dict(state_dict)
 
 
-class Optimizer(AbstractOptimizer):
+class ConstantLROptimizer(OptimizerBase):
     def __init__(
             self,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             lr: float = 1e-3,
-            **kwargs
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
     ):
+        _validate_non_negative_float(lr, 'lr')
         self.lr = lr
-
         super().__init__(
             algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
             lr=lr,
-            **kwargs
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -72,7 +119,291 @@ class Optimizer(AbstractOptimizer):
             return self.lr
         return lr_function
 
-class OptimizerWithWarmup(AbstractOptimizer):
+
+class WarmupOptimizer(OptimizerBase):
+    def __init__(
+            self,
+            init_lr: float,
+            warmup_epochs: int,
+            final_lr: float = 1e-3,
+            scale: str = 'exponential',
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
+    ):
+        _validate_positive_int(warmup_epochs, 'warmup_epochs')
+        _validate_non_negative_float(init_lr, 'init_lr')
+        _validate_non_negative_float(final_lr, 'final_lr')
+        self.init_lr = init_lr
+        self.warmup_epochs = warmup_epochs
+        self.final_lr = final_lr
+        self.scale = scale
+        super().__init__(
+            algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            init_lr=init_lr,
+            warmup_epochs=warmup_epochs,
+            final_lr=final_lr,
+            scale=scale,
+        )
+
+    def get_lr_function(self) -> Callable[[int], float]:
+        def lr_function(epoch: int):
+            if epoch < self.warmup_epochs:
+                return _interpolate_lr(self.init_lr, self.final_lr, epoch / self.warmup_epochs, self.scale)
+            return self.final_lr
+        return lr_function
+
+
+class WarmupDecayOptimizer(OptimizerBase):
+    def __init__(
+            self,
+            init_lr: float,
+            warmup_epochs: int,
+            peak_lr: float,
+            total_epochs: int,
+            final_lr: float,
+            warmup_scale: str = 'exponential',
+            decay_scale: str = 'exponential',
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
+    ):
+        _validate_positive_int(warmup_epochs, 'warmup_epochs')
+        _validate_positive_int(total_epochs, 'total_epochs')
+        if total_epochs <= warmup_epochs:
+            raise ValueError('total_epochs must be greater than warmup_epochs.')
+        for name, lr in [('init_lr', init_lr), ('peak_lr', peak_lr), ('final_lr', final_lr)]:
+            _validate_non_negative_float(lr, name)
+        self.init_lr = init_lr
+        self.warmup_epochs = warmup_epochs
+        self.peak_lr = peak_lr
+        self.total_epochs = total_epochs
+        self.final_lr = final_lr
+        self.warmup_scale = warmup_scale
+        self.decay_scale = decay_scale
+        super().__init__(
+            algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            init_lr=init_lr,
+            warmup_epochs=warmup_epochs,
+            peak_lr=peak_lr,
+            total_epochs=total_epochs,
+            final_lr=final_lr,
+            warmup_scale=warmup_scale,
+            decay_scale=decay_scale,
+        )
+
+    def get_lr_function(self) -> Callable[[int], float]:
+        def lr_function(epoch: int):
+            if epoch < self.warmup_epochs:
+                return _interpolate_lr(
+                    self.init_lr,
+                    self.peak_lr,
+                    epoch / self.warmup_epochs,
+                    self.warmup_scale
+                )
+            if epoch < self.total_epochs:
+                return _interpolate_lr(
+                    self.peak_lr,
+                    self.final_lr,
+                    (epoch - self.warmup_epochs) / (self.total_epochs - self.warmup_epochs),
+                    self.decay_scale
+                )
+            return self.final_lr
+        return lr_function
+
+
+class InverseTimeDecayOptimizer(OptimizerBase):
+    def __init__(
+            self,
+            initial_lr: float,
+            decay_steps: int,
+            decay_rate: float = 1.0,
+            min_lr: float = None,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
+    ):
+        _validate_positive_int(decay_steps, 'decay_steps')
+        _validate_non_negative_float(initial_lr, 'initial_lr')
+        _validate_non_negative_float(decay_rate, 'decay_rate')
+        if min_lr is not None:
+            _validate_non_negative_float(min_lr, 'min_lr')
+        self.initial_lr = initial_lr
+        self.decay_steps = decay_steps
+        self.decay_rate = decay_rate
+        self.min_lr = min_lr
+        super().__init__(
+            algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            initial_lr=initial_lr,
+            decay_steps=decay_steps,
+            decay_rate=decay_rate,
+            min_lr=min_lr,
+        )
+
+    def get_lr_function(self) -> Callable[[int], float]:
+        def lr_function(epoch: int):
+            lr = self.initial_lr / (1 + self.decay_rate * epoch / self.decay_steps)
+            if self.min_lr is not None:
+                lr = max(lr, self.min_lr)
+            return lr
+        return lr_function
+
+
+class ExponentialDecayOptimizer(OptimizerBase):
+    def __init__(
+            self,
+            initial_lr: float,
+            gamma: float,
+            decay_steps: int = 1,
+            staircase: bool = False,
+            min_lr: float = None,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
+    ):
+        _validate_positive_int(decay_steps, 'decay_steps')
+        _validate_non_negative_float(initial_lr, 'initial_lr')
+        _validate_non_negative_float(gamma, 'gamma')
+        if min_lr is not None:
+            _validate_non_negative_float(min_lr, 'min_lr')
+        self.initial_lr = initial_lr
+        self.gamma = gamma
+        self.decay_steps = decay_steps
+        self.staircase = staircase
+        self.min_lr = min_lr
+        super().__init__(
+            algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            initial_lr=initial_lr,
+            gamma=gamma,
+            decay_steps=decay_steps,
+            staircase=staircase,
+            min_lr=min_lr,
+        )
+
+    def get_lr_function(self) -> Callable[[int], float]:
+        def lr_function(epoch: int):
+            exponent = epoch // self.decay_steps if self.staircase else epoch / self.decay_steps
+            lr = self.initial_lr * self.gamma ** exponent
+            if self.min_lr is not None:
+                lr = max(lr, self.min_lr)
+            return lr
+        return lr_function
+
+
+class StepDecayOptimizer(OptimizerBase):
+    def __init__(
+            self,
+            initial_lr: float,
+            step_size: int,
+            gamma: float = 0.1,
+            min_lr: float = None,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
+    ):
+        _validate_positive_int(step_size, 'step_size')
+        _validate_non_negative_float(initial_lr, 'initial_lr')
+        _validate_non_negative_float(gamma, 'gamma')
+        if min_lr is not None:
+            _validate_non_negative_float(min_lr, 'min_lr')
+        self.initial_lr = initial_lr
+        self.step_size = step_size
+        self.gamma = gamma
+        self.min_lr = min_lr
+        super().__init__(
+            algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            initial_lr=initial_lr,
+            step_size=step_size,
+            gamma=gamma,
+            min_lr=min_lr,
+        )
+
+    def get_lr_function(self) -> Callable[[int], float]:
+        def lr_function(epoch: int):
+            lr = self.initial_lr * self.gamma ** (epoch // self.step_size)
+            if self.min_lr is not None:
+                lr = max(lr, self.min_lr)
+            return lr
+        return lr_function
+
+
+class CosineAnnealingOptimizer(OptimizerBase):
+    def __init__(
+            self,
+            initial_lr: float,
+            total_epochs: int,
+            min_lr: float = 0.0,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
+    ):
+        _validate_positive_int(total_epochs, 'total_epochs')
+        _validate_non_negative_float(initial_lr, 'initial_lr')
+        _validate_non_negative_float(min_lr, 'min_lr')
+        self.initial_lr = initial_lr
+        self.total_epochs = total_epochs
+        self.min_lr = min_lr
+        super().__init__(
+            algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            initial_lr=initial_lr,
+            total_epochs=total_epochs,
+            min_lr=min_lr,
+        )
+
+    def get_lr_function(self) -> Callable[[int], float]:
+        def lr_function(epoch: int):
+            progress = min(max(epoch / self.total_epochs, 0.0), 1.0)
+            return self.min_lr + 0.5 * (self.initial_lr - self.min_lr) * (1 + np.cos(np.pi * progress))
+        return lr_function
+
+
+class PolynomialDecayOptimizer(OptimizerBase):
+    def __init__(
+            self,
+            initial_lr: float,
+            total_epochs: int,
+            final_lr: float = 0.0,
+            power: float = 1.0,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
+    ):
+        _validate_positive_int(total_epochs, 'total_epochs')
+        _validate_non_negative_float(initial_lr, 'initial_lr')
+        _validate_non_negative_float(final_lr, 'final_lr')
+        if power < 0:
+            raise ValueError(f'power must be non-negative. {power} was given.')
+        self.initial_lr = initial_lr
+        self.total_epochs = total_epochs
+        self.final_lr = final_lr
+        self.power = power
+        super().__init__(
+            algorithm=algorithm,
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            initial_lr=initial_lr,
+            total_epochs=total_epochs,
+            final_lr=final_lr,
+            power=power,
+        )
+
+    def get_lr_function(self) -> Callable[[int], float]:
+        def lr_function(epoch: int):
+            progress = min(max(epoch / self.total_epochs, 0.0), 1.0)
+            return (self.initial_lr - self.final_lr) * (1 - progress) ** self.power + self.final_lr
+        return lr_function
+
+
+AbstractOptimizer = OptimizerBase
+Optimizer = ConstantLROptimizer
+
+
+class OptimizerWithWarmup(WarmupOptimizer):
     def __init__(
             self,
             init_lr: float,
@@ -80,40 +411,21 @@ class OptimizerWithWarmup(AbstractOptimizer):
             final_lr: float = 1e-3,
             log_scale: bool = True,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
-            **kwargs
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
     ):
-        self.init_lr = init_lr
-        self.init_epoch = init_epoch
-        self.final_lr = final_lr
-        self.log_scale = log_scale
-
         super().__init__(
-            algorithm=algorithm,
             init_lr=init_lr,
-            init_epoch=init_epoch,
+            warmup_epochs=init_epoch,
             final_lr=final_lr,
-            log_scale=log_scale,
-            **kwargs
+            scale='exponential' if log_scale else 'linear',
+            algorithm=algorithm,
+            optimizer_params=optimizer_params,
+            **optimizer_kwargs
         )
 
 
-    def get_lr_function(self) -> Callable[[int], float]:
-        if self.log_scale:
-            def lr_function(epoch: int):
-                if epoch < self.init_epoch:
-                    return np.exp((np.log(self.final_lr / self.init_lr)) * epoch / self.init_epoch) * self.init_lr
-                else:
-                    return self.final_lr
-        else:
-            def lr_function(epoch: int):
-                if epoch < self.init_epoch:
-                    return (self.final_lr - self.init_lr) * epoch / self.init_epoch + self.init_lr
-                else:
-                    return self.final_lr
-        return lr_function
-
-
-class OptimizerWithWarmupAndDecay(AbstractOptimizer):
+class OptimizerWithWarmupAndDecay(WarmupDecayOptimizer):
     def __init__(
             self,
             init_lr: float,
@@ -123,76 +435,39 @@ class OptimizerWithWarmupAndDecay(AbstractOptimizer):
             final_lr: float,
             log_scale: bool = True,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
-            **kwargs
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
     ):
-        self.init_lr = init_lr
-        self.mid_epoch = mid_epoch
-        self.mid_lr = mid_lr
-        self.final_epoch = final_epoch
-        self.final_lr = final_lr
-        self.log_scale = log_scale
-
         super().__init__(
-            algorithm=algorithm,
             init_lr=init_lr,
-            init_epoch=mid_epoch,
+            warmup_epochs=mid_epoch,
+            peak_lr=mid_lr,
+            total_epochs=final_epoch,
             final_lr=final_lr,
-            log_scale=log_scale,
-            **kwargs
+            warmup_scale='exponential' if log_scale else 'linear',
+            decay_scale='exponential' if log_scale else 'linear',
+            algorithm=algorithm,
+            optimizer_params=optimizer_params,
+            **optimizer_kwargs
         )
 
-    def get_lr_function(self) -> Callable[[int], float]:
-        if self.log_scale:
-            def lr_function(epoch: int):
-                if epoch < self.mid_epoch:
-                    return np.exp((np.log(self.mid_lr / self.init_lr)) * epoch / self.mid_epoch) * self.init_lr
-                elif epoch < self.final_epoch:
-                    return np.exp((np.log(self.final_lr / self.mid_lr)) *
-                                  (epoch - self.mid_epoch) / (self.final_epoch - self.mid_epoch)) * self.mid_lr
-                else:
-                    return self.final_lr
-        else:
-            def lr_function(epoch: int):
-                if epoch < self.mid_epoch:
-                    return (self.mid_lr - self.init_lr) * epoch / self.mid_epoch + self.init_lr
-                elif epoch < self.final_epoch:
-                    return ((self.final_lr - self.mid_lr) * (epoch - self.mid_epoch)
-                            / (self.final_epoch - self.mid_epoch) + self.mid_lr)
-                else:
-                    return self.final_lr
-        return lr_function
 
-
-class OptimizerWithInverseDecay(AbstractOptimizer):
+class OptimizerWithInverseDecay(InverseTimeDecayOptimizer):
     def __init__(
             self,
             init_lr: float,
             half_epoch: int,
             final_lr: float = None,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
-            **kwargs
+            optimizer_params: dict[str, object] = None,
+            **optimizer_kwargs
     ):
-        self.init_lr = init_lr
-        self.half_epoch = half_epoch
-        self.final_lr = final_lr
-
         super().__init__(
+            initial_lr=init_lr,
+            decay_steps=half_epoch,
+            decay_rate=1.0,
+            min_lr=final_lr,
             algorithm=algorithm,
-            init_lr=init_lr,
-            inverse_rate=half_epoch,
-            final_lr=final_lr,
-            **kwargs
+            optimizer_params=optimizer_params,
+            **optimizer_kwargs
         )
-
-    def get_lr_function(self) -> Callable[[int], float]:
-        if self.final_lr is None:
-            def lr_function(epoch: int):
-                return self.init_lr / (1 + epoch / self.half_epoch)
-        else:
-            epoch_limit = (self.init_lr / self.final_lr - 1) * self.half_epoch
-            def lr_function(epoch: int):
-                if epoch_limit < epoch:
-                    return self.final_lr
-                else:
-                    return self.init_lr / (1 + epoch / self.half_epoch)
-        return lr_function

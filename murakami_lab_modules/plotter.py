@@ -441,9 +441,3 @@ def plot_histogram(
     else:
         plt.close()
 
-
-if __name__ == '__main__':
-    import pandas as pd
-    data = pd.read_csv(r"C:\Users\YuyaMurakami\Desktop\Book1.csv", encoding='cp932')
-    for name in data.columns:
-        plot_histogram(data=data[name], show=True)

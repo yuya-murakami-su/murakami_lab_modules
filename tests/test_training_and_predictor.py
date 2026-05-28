@@ -6,7 +6,7 @@ from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.data_handler import DataHandler
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.optimizer import ConstantLROptimizer
 from murakami_lab_modules.predictor import NNPredictor
 from murakami_lab_modules.regularization import Regularization
 
@@ -47,7 +47,7 @@ def test_model_handler_trains_one_epoch_and_saves_files(tmp_path):
     data_handler = _make_data_handler(tmp_path)
     data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
     nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -72,7 +72,7 @@ def test_model_handler_can_skip_heavy_model_files(tmp_path):
     data_handler = _make_data_handler(tmp_path)
     data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
     nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -94,11 +94,35 @@ def test_model_handler_can_skip_heavy_model_files(tmp_path):
     assert not (model_path / 'normalizer.pth').exists()
 
 
+def test_save_model_false_skips_best_state_snapshot(tmp_path):
+    data_handler = _make_data_handler(tmp_path)
+    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=1,
+        save_path=str(tmp_path / 'Model'),
+        train_record_path=str(tmp_path / 'train_record'),
+        save_model=False,
+    )
+
+    def fail_get_state_dicts():
+        raise AssertionError('_get_state_dicts should not be called when save_model=False.')
+
+    model_handler._get_state_dicts = fail_get_state_dicts
+    model_handler()
+
+    assert model_handler.state_dicts is None
+
+
 def test_model_handler_can_disable_all_file_outputs(tmp_path):
     data_handler = _make_data_handler(tmp_path)
     data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
     nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -117,11 +141,35 @@ def test_model_handler_can_disable_all_file_outputs(tmp_path):
     assert not (tmp_path / 'train_record.csv').exists()
 
 
+def test_save_result_false_skips_best_state_snapshot(tmp_path):
+    data_handler = _make_data_handler(tmp_path)
+    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=1,
+        save_path=str(tmp_path / 'Model'),
+        train_record_path=str(tmp_path / 'train_record'),
+        save_result=False,
+    )
+
+    def fail_get_state_dicts():
+        raise AssertionError('_get_state_dicts should not be called when save_result=False.')
+
+    model_handler._get_state_dicts = fail_get_state_dicts
+    model_handler()
+
+    assert model_handler.state_dicts is None
+
+
 def test_model_handler_verbose_false_still_saves_results(tmp_path, capsys):
     data_handler = _make_data_handler(tmp_path)
     data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
     nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -146,7 +194,7 @@ def test_model_handler_with_regularization_saves_weight_report(tmp_path):
     data_handler = _make_data_handler(tmp_path)
     data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
     nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
     regularization = OutputMagnitudeRegularization(
         input_generators=[DummyInputGenerator()],
         reg_weights=[0.1],
@@ -176,7 +224,7 @@ def test_nn_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path
     data_handler = _make_data_handler(tmp_path)
     data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
     nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,

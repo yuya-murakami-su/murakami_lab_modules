@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import os
+from pathlib import Path
 from .neural_network import AbstractNeuralNetwork
 from . import utils
 from .normalizer import AbstractNormalizer
@@ -125,7 +125,7 @@ class NNPredictor(AbstractPredictor):
             device_name: str = 'cpu',
     ):
         super().__init__()
-        self.model_path = model_path
+        self.model_path = Path(model_path)
         self.nn_class = nn_class
         self.load_normalizer = load_normalizer
         self.device_name = device_name
@@ -172,20 +172,23 @@ class NNPredictor(AbstractPredictor):
         return nn_function
 
     def _prepare_nn(self):
-        config = utils.load_json(f'{self.model_path}\\config.json')
+        config = utils.load_json(self.model_path / 'config.json')
         nn_config = config['nn']
         nn_class = self.nn_class or utils.import_object(nn_config['class'])
         self.nn = nn_class(**utils.deserialize_params(nn_config['params']))
 
     def _send_to_device(self):
-        state_dicts = torch.load(f'{self.model_path}\\state_dicts.pth', weights_only=False, map_location='cpu')
+        state_dicts = torch.load(self.model_path / 'state_dicts.pth', weights_only=True, map_location='cpu')
         self.nn.load_state_dict(state_dicts['nn_state_dict'])
         self.nn.to(self.device)
         if self.load_normalizer:
-            if not os.path.exists(f'{self.model_path}\\normalizer.pth'):
+            if not (self.model_path / 'normalizer.pth').exists():
                 raise ValueError('Normalizer is not found. Please set to load_normalizer = False.')
-            self.normalizer = torch.load(f'{self.model_path}\\normalizer.pth', weights_only=False,
-                                         map_location=self.device_name)
+            self.normalizer = torch.load(
+                self.model_path / 'normalizer.pth',
+                weights_only=True,
+                map_location=self.device_name
+            )
             self.input_normalizer = AbstractNormalizer.from_config_dict(self.normalizer['input_normalizer']).to(self.device)
             self.output_normalizer = AbstractNormalizer.from_config_dict(
                 self.normalizer['output_normalizer']

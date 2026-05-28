@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from pathlib import Path
 
 import pandas as pd
 import torch
@@ -167,6 +168,7 @@ class MatchDataLossRegWeight(TargetTotalRegWeight):
 
 class Regularization:
     _different_n_points_warned = False
+    _validation_modes = {'always', 'once', 'never'}
 
     grad = staticmethod(differential.grad)
     partial = staticmethod(differential.partial)
@@ -185,7 +187,8 @@ class Regularization:
             reg_names: list[str] = None,
             reg_criteria: Callable[[torch.Tensor], torch.Tensor] = torch.square,
             use_reg_prod: bool = False,
-            reg_min: float = None
+            reg_min: float = None,
+            validation: str = 'once'
     ):
         self.locals = utils.get_local_dict(locals())
         self.input_generators = input_generators
@@ -196,6 +199,10 @@ class Regularization:
         self.use_reg_prod = use_reg_prod
         self.reg_min_value = reg_min
         self.reg_min = reg_min
+        if validation not in self._validation_modes:
+            raise ValueError(f'validation must be one of {sorted(self._validation_modes)}. {validation} was given.')
+        self.validation = validation
+        self._regularization_outputs_validated = False
         self.weight_report = None
 
         self.n_generator = len(input_generators)
@@ -249,7 +256,8 @@ class Regularization:
             'reg_names': self.reg_names,
             'reg_criteria': self.reg_criteria,
             'use_reg_prod': self.use_reg_prod,
-            'reg_min': self.reg_min_value
+            'reg_min': self.reg_min_value,
+            'validation': self.validation
         })
 
     def regularization(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
@@ -309,8 +317,18 @@ class Regularization:
             nn: AbstractNeuralNetwork,
             data_handler: DataHandler = None
     ) -> torch.Tensor:
-        regs = self._validate_regularization_outputs(self.reg_func(data_handler=data_handler, nn=nn))
+        regs = self.reg_func(data_handler=data_handler, nn=nn)
+        if self._should_validate_regularization_outputs():
+            regs = self._validate_regularization_outputs(regs)
+            self._regularization_outputs_validated = True
         return self._get_regularization_mean(regs)
+
+    def _should_validate_regularization_outputs(self) -> bool:
+        if self.validation == 'always':
+            return True
+        if self.validation == 'once':
+            return not self._regularization_outputs_validated
+        return False
 
     def combine_regularization_terms(
             self,
@@ -406,7 +424,7 @@ class Regularization:
             })
         return self.weight_report.copy()
 
-    def save_weight_report(self, path: str, **to_csv_kwargs) -> None:
+    def save_weight_report(self, path: str | Path, **to_csv_kwargs) -> None:
         self.weight_summary_df().to_csv(path, index=False, **to_csv_kwargs)
 
     def get_regularization_value(

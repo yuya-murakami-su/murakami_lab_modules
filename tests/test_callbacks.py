@@ -6,7 +6,7 @@ from murakami_lab_modules.callbacks import Callback, LossMonitor, SavePrediction
 from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.optimizer import ConstantLROptimizer
 
 from tests.test_training_and_predictor import _make_data_handler
 
@@ -24,7 +24,7 @@ def _make_model_handler(tmp_path, callbacks=(), train_epochs=3, save_result=True
     data_handler = _make_data_handler(tmp_path)
     data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
     nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
     return ModelHandler(
         nn=nn,
         optimizer=optimizer,

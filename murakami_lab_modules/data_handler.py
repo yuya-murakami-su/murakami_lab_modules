@@ -167,6 +167,8 @@ class DataHandler:
     def _json_safe(value: object) -> object:
         if value is None or isinstance(value, (bool, int, float, str)):
             return value
+        if isinstance(value, Path):
+            return str(value)
         if isinstance(value, np.integer):
             return int(value)
         if isinstance(value, np.floating):
@@ -266,7 +268,7 @@ class DataHandler:
         self.outputs = self.outputs.to(self.device)
 
     @staticmethod
-    def _read_csv(data_path: str, encoding: str = None) -> pd.DataFrame:
+    def _read_csv(data_path: str | Path, encoding: str = None) -> pd.DataFrame:
         if encoding is not None:
             return pd.read_csv(data_path, encoding=encoding, index_col=None)
 
@@ -286,13 +288,14 @@ class DataHandler:
 
     @staticmethod
     def _load_raw_file(data_path: str, csv_encoding: str = None):
-        if data_path.endswith('.csv'):
+        data_path = Path(data_path)
+        if data_path.suffix == '.csv':
             return DataHandler._read_csv(data_path, encoding=csv_encoding)
-        elif data_path.endswith(('.pth', '.pt')):
+        elif data_path.suffix in ('.pth', '.pt'):
             return torch.load(data_path, weights_only=False)
-        elif data_path.endswith('.npy'):
+        elif data_path.suffix == '.npy':
             return np.load(data_path, allow_pickle=True)
-        elif data_path.endswith('.npz'):
+        elif data_path.suffix == '.npz':
             return dict(np.load(data_path, allow_pickle=True))
         else:
             raise NotImplementedError(f'Unsupported data file format: {data_path}')
@@ -633,6 +636,19 @@ class Dataset:
         else:
             return self.inputs, self.outputs, self.labels
 
+    def iter_batches(self, batch_size: int, shuffle: bool = False):
+        if self.n_data == 0:
+            return
+
+        indices = self._get_permutation() if shuffle else None
+        n_batch = (self.n_data + batch_size - 1) // batch_size
+        for i in range(n_batch):
+            idx = slice(i * batch_size, (i + 1) * batch_size)
+            if indices is None:
+                yield self.inputs[idx], self.outputs[idx], self._select_metadata(self.labels, idx)
+            else:
+                yield self._select(indices[idx])()
+
     @staticmethod
     def empty_dataset() -> 'Dataset':
         return Dataset(torch.empty([0]), torch.empty([0]), np.empty([0, 1], dtype=object))
@@ -653,7 +669,4 @@ class DataLoader:
             self.n_batch = 0
 
     def __call__(self):
-        inputs, outputs, labels = self.dataset(self.shuffle)
-        for i in range(self.n_batch):
-            idx = slice(i * self.batch_size, (i + 1) * self.batch_size)
-            yield inputs[idx], outputs[idx], labels[idx]
+        yield from self.dataset.iter_batches(batch_size=self.batch_size, shuffle=self.shuffle)

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from murakami_lab_modules.data_handler import DataHandler, Dataset
+from murakami_lab_modules.data_handler import DataHandler, DataLoader, Dataset
 from murakami_lab_modules.normalizer import LogStandardNormalizer, StandardNormalizer
 
 
@@ -20,6 +20,27 @@ def test_dataset_random_split_does_not_mutate_original():
     assert valid.n_data == 1
     assert test.n_data == 2
     assert train.labels.dtype.kind in {'U', 'S', 'O'}
+
+
+def test_dataloader_shuffle_selects_only_batch_sized_slices():
+    inputs = torch.arange(12, dtype=torch.float32).reshape(6, 2)
+    outputs = torch.arange(6, dtype=torch.float32).reshape(6, 1)
+    labels = np.arange(6).reshape(-1, 1)
+    dataset = Dataset(inputs, outputs, labels)
+    selected_sizes = []
+    original_select = dataset._select
+
+    def select_with_count(indices):
+        selected_sizes.append(len(indices))
+        return original_select(indices)
+
+    dataset._select = select_with_count
+    loader = DataLoader(dataset, batch_size=2, shuffle=True)
+
+    batches = list(loader())
+
+    assert selected_sizes == [2, 2, 2]
+    assert sorted(np.vstack([batch[2] for batch in batches]).reshape(-1).tolist()) == list(range(6))
 
 
 def test_data_handler_keeps_string_labels_and_normalizes_with_exclusions(tmp_path):

@@ -1,47 +1,4 @@
-from setuptools import setup, find_packages
-from pathlib import Path
+from setuptools import setup
 
-readme = (Path(__file__).parent / 'README.md')
-long_desc = readme.read_text(encoding='utf-8') if readme.exists() else 'murakami lab modules'
 
-setup(
-    name='murakami_lab_modules',
-    version='0.2.3',
-    packages=find_packages(),
-    install_requires=[
-        'numpy>=1.26.0',
-        'pandas>=2.2.0',
-    ],
-    extras_require={
-        'torch': [
-            'torch>=2.0.0',
-        ],
-        'plot': [
-            'matplotlib>=3.9.0',
-        ],
-        'statistics': [
-            'matplotlib>=3.9.0',
-            'scikit-learn>=1.7.2',
-        ],
-        'test': [
-            'pytest>=8.0.0',
-            'torch>=2.0.0',
-        ],
-        'all': [
-            'torch>=2.0.0',
-            'matplotlib>=3.9.0',
-            'scikit-learn>=1.7.2',
-            'pytest>=8.0.0',
-        ],
-    },
-    python_requires='>=3.11',
-    author='Yuya Murakami',
-    description='A simple library for machine learning',
-    long_description=long_desc,
-    long_description_content_type='text/markdown',
-    url='https://github.com/yuya-murakami-su/murakami_lab_modules',
-    classifiers=[
-        'Programming language :: Python :: 3',
-        'Operating System :: OS Independent',
-    ]
-)
+setup()

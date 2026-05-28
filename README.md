@@ -1,58 +1,194 @@
 # murakami_lab_modules
 
-murakami_lab_modules is the library mainly for machine learning.
-For the detailed instruction, please contact to the author.
-This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+`murakami_lab_modules` is a small PyTorch-based toolkit for neural-network fitting and PINN-style regularization.
+It includes utilities for data loading, normalization, training loops, regularization terms, automatic differentiation,
+plotting callbacks, prediction, and cross-validation / hyper-parameter search.
 
-## How to install
-```markdown
+## Installation
+
+For a standard CPU-oriented Python environment:
+
+```bash
 pip install git+https://github.com/yuya-murakami-su/murakami_lab_modules.git
 ```
 
-## PyTorch dependency
+PyTorch is a core dependency. If you need a specific CUDA build, install the PyTorch wheel recommended for your
+environment first, then install this package. Pip will keep the already installed compatible PyTorch package.
 
-**Important:** PyTorch is required by the core modules, but this package does not install it by default.
-Install PyTorch first so you can choose the correct CPU or CUDA build for your environment.
+Optional plotting and statistics dependencies:
 
-For example, install the PyTorch build recommended for your system from the official PyTorch installation guide,
-then install this package:
-
-```markdown
-pip install git+https://github.com/yuya-murakami-su/murakami_lab_modules.git
+```bash
+pip install "murakami_lab_modules[plot]"
+pip install "murakami_lab_modules[statistics]"
+pip install "murakami_lab_modules[all]"
 ```
 
-If you do not need a specific CPU/CUDA wheel, a convenience extra is available:
+For local development:
 
-```markdown
-pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[torch]"
+```bash
+pip install -e ".[test,plot,statistics]"
+python -m pytest
 ```
 
-This extra asks pip to install `torch`, but it does not guarantee a specific CPU or CUDA build.
+## Minimal Training Example
 
-## Optional dependencies
+```python
+import torch
 
-Plotting utilities:
+from murakami_lab_modules.data_fitting import DataFitting
+from murakami_lab_modules.data_handler import DataHandler
+from murakami_lab_modules.model_handler import ModelHandler
+from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
+from murakami_lab_modules.optimizer import ConstantLROptimizer
 
-```markdown
-pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[plot]"
+data_handler = DataHandler(
+    input_data_path="x.csv",
+    input_idx=["x1", "x2"],
+    output_data_path="y.csv",
+    output_idx=["y"],
+    split_ratio=(0.8, 0.2),
+    batch_size=32,
+)
+
+model_handler = ModelHandler(
+    nn=FeedForwardNeuralNetwork(n_input=2, n_output=1, n_layer=2, n_node=64),
+    optimizer=ConstantLROptimizer(torch.optim.Adam, lr=1e-3),
+    data_fitting=DataFitting(data_handler, loss_criteria=torch.nn.MSELoss()),
+    train_epochs=1000,
+)
+
+model_handler()
 ```
 
-PCA/statistics utilities:
+## PINN-Style Regularization
 
-```markdown
-pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[statistics]"
+Define a subclass of `Regularization` and return one tensor per regularization term.
+
+```python
+from murakami_lab_modules.input_generator import InputGenerator
+from murakami_lab_modules.regularization import Regularization, TargetTotalRegWeight
+
+
+class MyRegularization(Regularization):
+    def regularization(self, data_handler, nn):
+        x = self.input_generators[0]()
+        y = nn(x=x)
+        return [y]
+
+
+regularization = MyRegularization(
+    input_generators=[
+        InputGenerator(
+            size_of_generated_inputs=256,
+            input_range=((0.0, 1.0), (0.0, 1.0)),
+            sampling="sobol",
+        )
+    ],
+    reg_names=["output_penalty"],
+    reg_weight_policy=TargetTotalRegWeight(target_total=1.0),
+)
 ```
 
-All optional dependencies:
+## Callbacks
 
-```markdown
-pip install "git+https://github.com/yuya-murakami-su/murakami_lab_modules.git#egg=murakami_lab_modules[all]"
+Callbacks own their own execution interval through `every`.
+
+```python
+from murakami_lab_modules.callbacks import LossMonitor, SavePredictionResults, StateDictsSaver
+
+callbacks = (
+    LossMonitor(every=10),
+    SavePredictionResults(every=100),
+    StateDictsSaver(every=1000),
+)
 ```
+
+## Optimizers and Learning-Rate Schedules
+
+Optimizer wrappers combine a PyTorch optimizer class with a learning-rate schedule.
+
+```python
+from murakami_lab_modules.optimizer import (
+    ConstantLROptimizer,
+    ExponentialDecayOptimizer,
+    StepDecayOptimizer,
+    CosineAnnealingOptimizer,
+    WarmupDecayOptimizer,
+)
+
+optimizer = ConstantLROptimizer(torch.optim.Adam, lr=1e-3)
+optimizer = StepDecayOptimizer(torch.optim.Adam, initial_lr=1e-3, step_size=1000, gamma=0.5)
+optimizer = CosineAnnealingOptimizer(torch.optim.Adam, initial_lr=1e-3, total_epochs=10_000, min_lr=1e-5)
+```
+
+Available schedules:
+
+- `ConstantLROptimizer`
+- `WarmupOptimizer`
+- `WarmupDecayOptimizer`
+- `InverseTimeDecayOptimizer`
+- `ExponentialDecayOptimizer`
+- `StepDecayOptimizer`
+- `CosineAnnealingOptimizer`
+- `PolynomialDecayOptimizer`
+
+## Cross-Validation and Hyper-Parameter Search
+
+`model_selection` intentionally uses a factory function so every fold/trial receives a fresh model, optimizer, and
+data handler.
+
+```python
+from murakami_lab_modules.model_selection import CrossValidator, KFoldSplitter
+
+
+def model_factory(params, split, context):
+    data_handler = DataHandler(
+        input_data_path="x.csv",
+        input_idx=["x1", "x2"],
+        output_data_path="y.csv",
+        output_idx=["y"],
+        split_type="index_split",
+        train_indices=split.train_indices,
+        valid_indices=split.valid_indices,
+        batch_size=params["batch_size"],
+    )
+    return ModelHandler(
+        nn=FeedForwardNeuralNetwork(n_input=2, n_output=1, n_layer=1, n_node=params["n_node"]),
+        optimizer=ConstantLROptimizer(torch.optim.Adam, lr=params["lr"]),
+        data_fitting=DataFitting(data_handler),
+        train_epochs=200,
+        save_result=False,
+        verbose=False,
+    )
+
+
+cv = CrossValidator(
+    model_factory=model_factory,
+    splitter=KFoldSplitter(n_splits=5),
+    indices=100,
+)
+results = cv.run(params={"lr": 1e-3, "batch_size": 32, "n_node": 64})
+```
+
+## Notes on Saved Models
+
+Saved model folders contain:
+
+- `config.json` and per-component metadata JSON files
+- `evolution.csv`
+- lightweight data summaries
+- `state_dicts.pth` and `normalizer.pth` when `save_model=True`
+
+Configuration files are intended as audit metadata. Reproducible training should be based on your script plus the saved
+state dicts and metadata.
+
+`.pth` data loading should be used only with files you trust. Model state dicts and normalizer files written by this
+library are loaded with PyTorch's restricted weights-only loader where possible.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
 
 ## Author
-```markdown
-- Yuya Murakami  
-- Shizuoka University, Japan
-- July 21st, 2025  
-- murakami.yuhya@cii.shizuoka.ac.jp
-```
+
+Yuya Murakami, Shizuoka University, Japan

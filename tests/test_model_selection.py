@@ -16,7 +16,7 @@ from murakami_lab_modules.model_selection import (
     sample_parameter_space,
 )
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.optimizer import ConstantLROptimizer
 
 
 def _write_linear_data(tmp_path, n_data=8):
@@ -49,7 +49,7 @@ def _make_factory(tmp_path, n_data=8):
         )
         data_fitting = DataFitting(data_handler=data_handler, loss_criteria=torch.nn.MSELoss())
         nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=context.seed)
-        optimizer = Optimizer(torch.optim.SGD, lr=params.get('lr', 1e-3))
+        optimizer = ConstantLROptimizer(torch.optim.SGD, lr=params.get('lr', 1e-3))
         return ModelHandler(
             nn=nn,
             optimizer=optimizer,
