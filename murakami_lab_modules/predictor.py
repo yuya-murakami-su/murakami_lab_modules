@@ -29,31 +29,91 @@ class AbstractPredictor:
             )
 
         if return_torch:
-            model_inputs = torch.array([n_total_variable, n_step])
+            model_inputs = torch.empty([n_step, n_total_variable], dtype=torch.float32)
             for i in range(n_total_variable):
                 if i == variable_idx:
                     model_inputs[:, i] = torch.linspace(*variables[variable_idx], steps=n_step)
                 else:
-                    model_inputs[:, i] = variables[i]
+                    model_inputs[:, i] = float(variables[i])
         else:
-            model_inputs = np.array([n_total_variable, n_step])
+            model_inputs = np.empty([n_step, n_total_variable], dtype=np.float32)
             for i in range(n_total_variable):
                 if i == variable_idx:
                     model_inputs[:, i] = np.linspace(*variables[variable_idx], num=n_step)
                 else:
-                    model_inputs[:, i] = variables[i]
+                    model_inputs[:, i] = float(variables[i])
 
         return self.model(model_inputs)
 
-    def predict_with_2_variable(self):
-        raise NotImplementedError('This method will be implemented in the future version.')
+    def predict_with_2_variable(
+            self,
+            variables: tuple,
+            n_step: int | tuple = 100,
+            return_torch: bool = False,
+            return_grid: bool = True,
+            squeeze_output: bool = True
+    ):
+        n_total_variable = len(variables)
+        variable_indices = []
+        for i, variable in enumerate(variables):
+            if type(variable) is list or type(variable) is tuple:
+                variable_indices.append(i)
+                if len(variable) != 2:
+                    raise ValueError(
+                        f'Range of variable must be given by the iterable with 2 elements. ({variable} was given)'
+                    )
+
+        if len(variable_indices) != 2:
+            raise ValueError(
+                f'predict_with_2_variable accept tuple in which two elements are tuple and others are single value. '
+                f'(Number of given iterables: {len(variable_indices)})'
+            )
+
+        if type(n_step) is int:
+            n_steps = (n_step, n_step)
+        elif type(n_step) is tuple or type(n_step) is list:
+            if len(n_step) != 2:
+                raise ValueError(f'n_step must be int or iterable with 2 elements. ({n_step} was given)')
+            n_steps = tuple(n_step)
+        else:
+            raise ValueError(f'n_step must be int, tuple, or list. ({type(n_step)} was given)')
+
+        if return_torch:
+            variable_0 = torch.linspace(*variables[variable_indices[0]], steps=n_steps[0])
+            variable_1 = torch.linspace(*variables[variable_indices[1]], steps=n_steps[1])
+            grid_0, grid_1 = torch.meshgrid(variable_0, variable_1, indexing='ij')
+            model_inputs = torch.empty([n_steps[0] * n_steps[1], n_total_variable], dtype=torch.float32)
+        else:
+            variable_0 = np.linspace(*variables[variable_indices[0]], num=n_steps[0])
+            variable_1 = np.linspace(*variables[variable_indices[1]], num=n_steps[1])
+            grid_0, grid_1 = np.meshgrid(variable_0, variable_1, indexing='ij')
+            model_inputs = np.empty([n_steps[0] * n_steps[1], n_total_variable], dtype=np.float32)
+
+        for i in range(n_total_variable):
+            if i == variable_indices[0]:
+                model_inputs[:, i] = grid_0.reshape(-1)
+            elif i == variable_indices[1]:
+                model_inputs[:, i] = grid_1.reshape(-1)
+            else:
+                model_inputs[:, i] = float(variables[i])
+
+        outputs = self.model(model_inputs)
+        if not return_grid:
+            return outputs
+
+        output_shape = outputs.shape[1:]
+        grid_outputs = outputs.reshape(n_steps[0], n_steps[1], *output_shape)
+        if squeeze_output and len(output_shape) == 1 and output_shape[0] == 1:
+            grid_outputs = grid_outputs.reshape(n_steps[0], n_steps[1])
+
+        return grid_0, grid_1, grid_outputs
 
 
 class NNPredictor(AbstractPredictor):
     def __init__(
             self,
             model_path: str,
-            nn_class: type(AbstractNeuralNetwork),
+            nn_class: type[AbstractNeuralNetwork],
             load_normalizer: bool = True,
             device_name: str = 'cpu',
     ):
