@@ -2,7 +2,13 @@ import numpy as np
 import pandas as pd
 import torch
 
-from murakami_lab_modules.training import BinaryClassificationFitting, DataFitting, MultiClassClassificationFitting
+from murakami_lab_modules.training import (
+    BinaryClassificationFitting,
+    DataFitting,
+    InputProductOutputTransform,
+    LatentOutputFitting,
+    MultiClassClassificationFitting,
+)
 from murakami_lab_modules.data import DataHandler
 from murakami_lab_modules.training import ModelHandler
 from murakami_lab_modules.models import FeedForwardNeuralNetwork
@@ -366,6 +372,91 @@ def test_data_fitting_caches_positional_nn_call_style(tmp_path):
     data_fitting.compute_loss(nn=nn, x=x, y=y, label=label)
 
     assert data_fitting._nn_call_styles[id(nn)] == 'positional'
+
+
+def test_input_product_output_transform_roundtrip():
+    transform = InputProductOutputTransform(input_indices=[0, 1])
+    x = torch.tensor([[2.0, 3.0], [4.0, 5.0]])
+    z = torch.tensor([[7.0], [11.0]])
+    y = transform.to_observed(x, z)
+
+    assert torch.allclose(y, torch.tensor([[42.0], [220.0]]))
+    assert torch.allclose(transform.to_latent(x, y), z)
+
+
+def test_latent_output_fitting_computes_observed_loss_and_prediction():
+    x = torch.tensor([
+        [1.0, 2.0],
+        [2.0, 3.0],
+        [3.0, 4.0],
+        [4.0, 5.0],
+    ])
+    latent = 1.0 + 0.5 * x[:, 0:1]
+    y = x[:, 0:1] * x[:, 1:2] * latent
+    data_handler = DataHandler.from_tensors(
+        inputs=x,
+        outputs=y,
+        batch_size=4,
+        split_ratio=(1.0,),
+        use_train_as_valid=True,
+    )
+    data_fitting = LatentOutputFitting(
+        data_handler=data_handler,
+        output_transform=InputProductOutputTransform(input_indices=[0, 1]),
+    )
+    nn = FeedForwardNeuralNetwork(input_dim=2, output_dim=1, n_hidden_layers=0, random_seed=1)
+    x_batch, y_batch, label = next(data_handler('train'))
+
+    loss_info = data_fitting.compute_loss(nn=nn, x=x_batch, y=y_batch, label=label)
+    y_pred = data_fitting.predict(nn=nn, x=x_batch)
+
+    assert loss_info['total'].ndim == 0
+    assert loss_info['y_pred'].shape == y_batch.shape
+    assert torch.allclose(loss_info['y_pred'], y_pred)
+    assert data_fitting.to_observed_prediction(y_pred) is y_pred
+
+
+def test_latent_output_predictor_restores_transform_and_normalizer(tmp_path):
+    x = torch.tensor([
+        [1.0, 2.0],
+        [2.0, 3.0],
+        [3.0, 4.0],
+        [4.0, 5.0],
+    ])
+    latent = 1.0 + 0.5 * x[:, 0:1]
+    y = x[:, 0:1] * x[:, 1:2] * latent
+    data_handler = DataHandler.from_tensors(
+        inputs=x,
+        outputs=y,
+        batch_size=4,
+        split_ratio=(1.0,),
+        use_train_as_valid=True,
+    )
+    data_fitting = LatentOutputFitting(
+        data_handler=data_handler,
+        output_transform=InputProductOutputTransform(input_indices=[0, 1]),
+    )
+    nn = FeedForwardNeuralNetwork(input_dim=2, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=1,
+        save_path=str(tmp_path / 'Model'),
+        summary_path=str(tmp_path / 'run_summary'),
+        verbose=False,
+    )
+    model_handler()
+
+    predictor = NeuralNetworkPredictor(model_path=model_handler.model_path)
+    x_np = x.detach().cpu().numpy().astype(np.float32)
+    restored_prediction = predictor(x_np)
+    x_norm = data_handler.normalize_x(x)
+    direct_prediction = data_fitting.predict(nn=model_handler.nn, x=x_norm)
+
+    assert restored_prediction.shape == (4, 1)
+    assert np.allclose(restored_prediction, direct_prediction.detach().cpu().numpy(), atol=1e-6)
 
 
 def test_neural_network_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path):

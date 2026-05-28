@@ -210,6 +210,39 @@ binary_fitting = BinaryClassificationFitting(data_handler)
 For multi-class classification, use integer class-index targets and set `output_dtype=torch.long`.
 For binary classification with logits, use float targets and disable output normalization.
 
+#### Latent Output Models
+
+Some scientific models should not predict the observed output directly. For example, reaction-rate
+or mixture-property models often use a known physical factor and a learned correction:
+
+```text
+y = x1 * x2 * N(x)
+```
+
+Use `LatentOutputFitting` for this pattern. The neural network predicts the normalized latent
+quantity `N(x)`, while the loss is computed in the observed `y` space.
+
+```python
+from murakami_lab_modules.training import (
+    InputProductOutputTransform,
+    LatentOutputFitting,
+)
+
+data_fitting = LatentOutputFitting(
+    data_handler=data_handler,
+    output_transform=InputProductOutputTransform(input_indices=[0, 1]),
+)
+```
+
+The transform is responsible for:
+
+- `to_latent(x, y)`: build latent training targets from raw inputs and outputs
+- `to_observed(x, z)`: map latent predictions back to observed outputs
+
+`BaseNormalizer` is still used for scale conversion. In this workflow it normalizes the latent
+quantity `N(x)`, not the full physical expression. Subclass `BaseOutputTransform` when the physical
+relationship is more complex than an input product.
+
 ### Optimizers
 
 `Optimizer` combines a PyTorch optimizer class with optional learning-rate schedules.

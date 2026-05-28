@@ -11,10 +11,13 @@ import torch
 
 from .. import utils
 from ..data.data_handler import DataHandler
+from ..data.normalizer import BaseNormalizer, StandardNormalizer
 from ..models.neural_network import BaseNeuralNetwork
+from .output_transforms import BaseOutputTransform, IdentityOutputTransform
 
 __all__ = [
     'DataFitting',
+    'LatentOutputFitting',
     'MultiClassClassificationFitting',
     'BinaryClassificationFitting',
 ]
@@ -42,6 +45,16 @@ class DataFitting:
         return utils.make_object_config(self, {
             'loss_fn': self.loss_fn,
         })
+
+    def to_observed_target(self, y: torch.Tensor) -> torch.Tensor:
+        """Convert a batch target to the observed output scale."""
+
+        return self.data_handler.undo_normalize_y(y)
+
+    def to_observed_prediction(self, y_pred: torch.Tensor) -> torch.Tensor:
+        """Convert model predictions to the observed output scale."""
+
+        return self.data_handler.undo_normalize_y(y_pred)
 
     def compute_loss(
             self,
@@ -112,6 +125,145 @@ class DataFitting:
                 f'loss_fn must return a scalar tensor. '
                 f'loss.shape={tuple(loss.shape)} was returned.'
             )
+
+
+class LatentOutputFitting(DataFitting):
+    """Data fitting for models that predict a latent output quantity.
+
+    The network is expected to return normalized latent values ``z_norm``.
+    ``latent_normalizer`` maps between ``z`` and ``z_norm``. ``output_transform``
+    maps raw inputs plus raw latent values to raw observations.
+
+    By default the loss is computed in observed ``y`` space:
+
+    ``NN(x_norm) -> z_norm -> z -> output_transform.to_observed(x_raw, z)``.
+    """
+
+    def __init__(
+            self,
+            data_handler: DataHandler,
+            output_transform: BaseOutputTransform = None,
+            latent_normalizer: BaseNormalizer = None,
+            loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = torch.nn.MSELoss(),
+            loss_space: str = 'observed',
+            observed_loss_weight: float = 1.0,
+            latent_loss_weight: float = 1.0,
+    ):
+        super().__init__(data_handler=data_handler, loss_fn=loss_fn)
+        if loss_space not in {'observed', 'latent', 'both'}:
+            raise ValueError("loss_space must be one of 'observed', 'latent', or 'both'.")
+        if observed_loss_weight < 0 or latent_loss_weight < 0:
+            raise ValueError('loss weights must be non-negative.')
+
+        self.output_transform = output_transform or IdentityOutputTransform()
+        self.latent_normalizer = latent_normalizer or StandardNormalizer()
+        self.loss_space = loss_space
+        self.observed_loss_weight = float(observed_loss_weight)
+        self.latent_loss_weight = float(latent_loss_weight)
+        self._fit_latent_pipeline()
+        self.locals = utils.get_local_dict(locals())
+
+    def config_dict(self) -> dict[str, object]:
+        return utils.make_object_config(self, {
+            'output_transform': self.output_transform.config_dict(),
+            'latent_normalizer': self.latent_normalizer.config_dict(),
+            'loss_fn': self.loss_fn,
+            'loss_space': self.loss_space,
+            'observed_loss_weight': self.observed_loss_weight,
+            'latent_loss_weight': self.latent_loss_weight,
+        })
+
+    def _fit_latent_pipeline(self) -> None:
+        x_train = self.data_handler.undo_normalize_x(self.data_handler.train.inputs)
+        y_train = self.data_handler.undo_normalize_y(self.data_handler.train.outputs)
+        self.output_transform.fit(x_train, y_train)
+        z_train = self.output_transform.to_latent(x_train, y_train)
+        self.latent_normalizer.fit(z_train)
+        self.output_transform.to(self.data_handler.device)
+        self.latent_normalizer.to(self.data_handler.device)
+
+    def to_observed_prediction(self, y_pred: torch.Tensor) -> torch.Tensor:
+        return y_pred
+
+    def predict_latent_normalized(
+            self,
+            nn: BaseNeuralNetwork,
+            x: torch.Tensor,
+            label=None,
+            phase: str = None,
+            epoch: int = None
+    ) -> torch.Tensor:
+        """Return normalized latent predictions from the network."""
+
+        return self._call_nn(nn, x)
+
+    def predict_latent(
+            self,
+            nn: BaseNeuralNetwork,
+            x: torch.Tensor,
+            label=None,
+            phase: str = None,
+            epoch: int = None
+    ) -> torch.Tensor:
+        """Return latent predictions in the raw latent scale."""
+
+        z_norm = self.predict_latent_normalized(nn=nn, x=x, label=label, phase=phase, epoch=epoch)
+        return self.latent_normalizer.inverse_transform(z_norm)
+
+    def predict(
+            self,
+            nn: BaseNeuralNetwork,
+            x: torch.Tensor,
+            label=None,
+            phase: str = None,
+            epoch: int = None
+    ) -> torch.Tensor:
+        x_raw = self.data_handler.undo_normalize_x(x)
+        z = self.predict_latent(nn=nn, x=x, label=label, phase=phase, epoch=epoch)
+        return self.output_transform.to_observed(x_raw, z)
+
+    def compute_loss(
+            self,
+            nn: BaseNeuralNetwork,
+            x: torch.Tensor,
+            y: torch.Tensor,
+            label=None,
+            phase: str = None,
+            epoch: int = None
+    ) -> dict[str, object]:
+        x_raw = self.data_handler.undo_normalize_x(x)
+        y_raw = self.to_observed_target(y)
+        z_pred_norm = self.predict_latent_normalized(nn=nn, x=x, label=label, phase=phase, epoch=epoch)
+        z_pred = self.latent_normalizer.inverse_transform(z_pred_norm)
+        y_pred = self.output_transform.to_observed(x_raw, z_pred)
+
+        terms = {}
+        total = None
+        if self.loss_space in {'observed', 'both'}:
+            observed_loss = self.loss_fn(y_raw, y_pred)
+            self._validate_loss(observed_loss)
+            terms['observed'] = observed_loss
+            total = observed_loss * self.observed_loss_weight
+        if self.loss_space in {'latent', 'both'}:
+            z_target = self.output_transform.to_latent(x_raw, y_raw)
+            z_target_norm = self.latent_normalizer.transform(z_target)
+            latent_loss = self.loss_fn(z_target_norm, z_pred_norm)
+            self._validate_loss(latent_loss)
+            terms['latent'] = latent_loss
+            weighted_latent_loss = latent_loss * self.latent_loss_weight
+            total = weighted_latent_loss if total is None else total + weighted_latent_loss
+
+        if total is None:
+            raise RuntimeError('No loss term was computed.')
+        self._validate_loss(total)
+        terms['data'] = total
+        return {
+            'total': total,
+            'terms': terms,
+            'y_pred': y_pred,
+            'z_pred': z_pred,
+            'z_pred_norm': z_pred_norm,
+        }
 
 
 class MultiClassClassificationFitting(DataFitting):

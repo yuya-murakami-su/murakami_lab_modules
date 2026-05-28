@@ -362,8 +362,8 @@ def evaluate_metrics(model_handler, metrics: Sequence[Metric], phase: str) -> di
             batch_sizes.append(len(x))
             for metric in metrics:
                 if metric.unnormalize:
-                    y_true_ = data_handler.undo_normalize_y(y)
-                    y_pred_ = data_handler.undo_normalize_y(y_pred)
+                    y_true_ = model_handler.data_fitting.to_observed_target(y)
+                    y_pred_ = model_handler.data_fitting.to_observed_prediction(y_pred)
                 else:
                     y_true_, y_pred_ = y, y_pred
                 metric_values[metric.name].append(_metric_value(metric, y_true_, y_pred_))

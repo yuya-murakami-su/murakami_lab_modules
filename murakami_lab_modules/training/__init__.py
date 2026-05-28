@@ -24,7 +24,7 @@ from .callbacks import (
     TargetLossReached,
     TerminateOnNaN,
 )
-from .data_fitting import BinaryClassificationFitting, DataFitting, MultiClassClassificationFitting
+from .data_fitting import BinaryClassificationFitting, DataFitting, LatentOutputFitting, MultiClassClassificationFitting
 from .model_handler import ModelHandler
 from .optimizer import (
     Optimizer,
@@ -37,8 +37,10 @@ from .optimizer import (
     step_decay_lr,
     warmup_decay_lr,
 )
+from .output_transforms import BaseOutputTransform, IdentityOutputTransform, InputProductOutputTransform
 
 __all__ = [
+    'BaseOutputTransform',
     'BestCheckpointSaver',
     'BestModelTracker',
     'BinaryClassificationFitting',
@@ -51,7 +53,10 @@ __all__ = [
     'GradientNormMonitor',
     'HistoryLogger',
     'HistoryRecorder',
+    'IdentityOutputTransform',
+    'InputProductOutputTransform',
     'LambdaCallback',
+    'LatentOutputFitting',
     'LearningRateLogger',
     'LossMonitor',
     'LossPlotSaver',

@@ -14,7 +14,7 @@ Run from the project root:
 ```bash
 python demos/01_basic_regression.py
 python demos/02_pinn_monotonicity_regularization.py
-python demos/03_classification.py
+python demos/03_latent_output_regression.py
 python demos/04_cross_validation.py
 python demos/05_prediction_from_saved_model.py
 ```
@@ -23,6 +23,6 @@ python demos/05_prediction_from_saved_model.py
 
 - `01_basic_regression.py`: data loading, training, saving, prediction, and plotting.
 - `02_pinn_monotonicity_regularization.py`: custom PINN-style regularization with first and second derivatives.
-- `03_classification.py`: multi-class classification and probability/class prediction.
+- `03_latent_output_regression.py`: regression with a known physical factor and a learned latent correction.
 - `04_cross_validation.py`: grid search with K-fold cross-validation.
 - `05_prediction_from_saved_model.py`: loading a saved model for NumPy and torch predictions.

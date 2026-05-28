@@ -53,6 +53,8 @@ class NeuralNetworkPredictor:
 
         self.device = utils.get_device(device_name)
         self._validate_postprocess()
+        self.config = utils.load_json(self.model_path / 'config.json')
+        self.is_latent_output_model = self._is_latent_output_model()
         self.model = self._load_network()
 
     def _load_network(self):
@@ -62,15 +64,8 @@ class NeuralNetworkPredictor:
         if self.load_normalizer:
             def predict_fn(x: torch.Tensor | np.ndarray):
                 with torch.no_grad():
-                    if type(x) is np.ndarray:
-                        x = torch.tensor(x, dtype=torch.float32).to(self.device)
-                        output_np = True
-                    else:
-                        x = x.to(self.device)
-                        output_np = False
-                    model_inputs = self.input_normalizer.transform(x)
-                    network_outputs = self.network(model_inputs)
-                    outputs = self.output_normalizer.inverse_transform(network_outputs)
+                    x, output_np = self._prepare_input(x)
+                    outputs = self._predict_with_normalizers(x)
                     outputs = self._postprocess_outputs(outputs)
                     if output_np:
                         return outputs.cpu().numpy()
@@ -79,12 +74,7 @@ class NeuralNetworkPredictor:
         else:
             def predict_fn(x: torch.Tensor | np.ndarray):
                 with torch.no_grad():
-                    if type(x) is np.ndarray:
-                        x = torch.tensor(x, dtype=torch.float32).to(self.device)
-                        output_np = True
-                    else:
-                        x = x.to(self.device)
-                        output_np = False
+                    x, output_np = self._prepare_input(x)
                     network_outputs = self.network(x)
                     network_outputs = self._postprocess_outputs(network_outputs)
                     if output_np:
@@ -92,6 +82,28 @@ class NeuralNetworkPredictor:
                     return network_outputs
 
         return predict_fn
+
+    def _prepare_input(self, x: torch.Tensor | np.ndarray) -> tuple[torch.Tensor, bool]:
+        if type(x) is np.ndarray:
+            return torch.tensor(x, dtype=torch.float32).to(self.device), True
+        return x.to(self.device), False
+
+    def _predict_with_normalizers(self, x: torch.Tensor) -> torch.Tensor:
+        model_inputs = self.input_normalizer.transform(x)
+        network_outputs = self.network(model_inputs)
+        if not self.is_latent_output_model:
+            return self.output_normalizer.inverse_transform(network_outputs)
+
+        z = self.latent_normalizer.inverse_transform(network_outputs)
+        return self.output_transform.to_observed(x, z)
+
+    def _is_latent_output_model(self) -> bool:
+        data_fitting_config = self.config.get('data_fitting')
+        if data_fitting_config is None:
+            return False
+        data_fitting_class = utils.import_object(data_fitting_config['class'])
+        from ..training.data_fitting import LatentOutputFitting
+        return issubclass(data_fitting_class, LatentOutputFitting)
 
     def _validate_postprocess(self) -> None:
         if self.postprocess not in {'raw', 'probability', 'class'}:
@@ -111,8 +123,7 @@ class NeuralNetworkPredictor:
         return torch.argmax(outputs, dim=-1)
 
     def _prepare_network(self):
-        config = utils.load_json(self.model_path / 'config.json')
-        network_config = config['nn']
+        network_config = self.config['nn']
         network_class = self.network_class or utils.import_object(network_config['class'])
         self.network = network_class(**utils.deserialize_params(network_config['params']))
 
@@ -132,10 +143,23 @@ class NeuralNetworkPredictor:
             self.output_normalizer = BaseNormalizer.from_config_dict(
                 self.normalizer['output_normalizer']
             ).to(self.device)
+            if self.is_latent_output_model:
+                self._prepare_latent_output_prediction()
         else:
             self.normalizer = None
             self.input_normalizer = None
             self.output_normalizer = None
+
+    def _prepare_latent_output_prediction(self) -> None:
+        from ..training.output_transforms import BaseOutputTransform
+
+        data_fitting_params = utils.deserialize_params(self.config['data_fitting']['params'])
+        self.output_transform = BaseOutputTransform.from_config_dict(
+            data_fitting_params['output_transform']
+        ).to(self.device)
+        self.latent_normalizer = BaseNormalizer.from_config_dict(
+            data_fitting_params['latent_normalizer']
+        ).to(self.device)
 
     def __call__(self, x: torch.Tensor | np.ndarray):
         """Predict from a NumPy array or torch tensor."""

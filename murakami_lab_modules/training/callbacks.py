@@ -983,16 +983,16 @@ class PredictionResultSaver(Callback):
                     label_np = utils.labels_to_numpy(label)
 
                     x_ = data_handler.undo_normalize_x(x)
-                    y_ = data_handler.undo_normalize_y(y)
-                    y_pred_ = data_handler.undo_normalize_y(y_pred)
+                    y_ = model_handler.data_fitting.to_observed_target(y)
+                    y_pred_ = model_handler.data_fitting.to_observed_prediction(y_pred)
 
                     batch = {}
                     for idx, column in enumerate(label_columns):
                         batch[column] = label_np[:, idx]
                     batch['key'] = np.full(label_np.shape[0], key, dtype=object)
-                    for idx in range(model_handler.nn.input_dim):
+                    for idx in range(x_.shape[1]):
                         batch[f'x_{idx}'] = x_[:, idx].detach().cpu().numpy()
-                    for idx in range(model_handler.nn.output_dim):
+                    for idx in range(y_.shape[1]):
                         batch[f'y_true_{idx}'] = y_[:, idx].detach().cpu().numpy()
                         batch[f'y_pred_{idx}'] = y_pred_[:, idx].detach().cpu().numpy()
                     for metric in self.prediction_metrics:
@@ -1005,9 +1005,9 @@ class PredictionResultSaver(Callback):
 
         columns = (
                 label_columns + ['key'] +
-                [f'x_{i}' for i in range(model_handler.nn.input_dim)] +
-                [f'y_true_{i}' for i in range(model_handler.nn.output_dim)] +
-                [f'y_pred_{i}' for i in range(model_handler.nn.output_dim)] +
+                [column for column in prediction_results[0].columns if column.startswith('x_')] +
+                [column for column in prediction_results[0].columns if column.startswith('y_true_')] +
+                [column for column in prediction_results[0].columns if column.startswith('y_pred_')] +
                 [f'{metric.__name__}_pred' for metric in self.prediction_metrics] +
                 [f'{metric.__name__}_norm' for metric in self.normalized_metrics]
         )
@@ -1048,8 +1048,9 @@ class ParityPlotSaver(Callback):
         self.output_dir = None
 
     def save_parity_plot(self, model_handler, folder: Path):
-        y_max = torch.full([1, model_handler.nn.output_dim], -torch.inf).to(model_handler.device)
-        y_min = torch.full([1, model_handler.nn.output_dim], torch.inf).to(model_handler.device)
+        output_dim = model_handler.data_fitting.data_handler.outputs.shape[1]
+        y_max = torch.full([1, output_dim], -torch.inf).to(model_handler.device)
+        y_min = torch.full([1, output_dim], torch.inf).to(model_handler.device)
         model_handler.nn.eval()
         with torch.no_grad():
             results = {}
@@ -1059,8 +1060,8 @@ class ParityPlotSaver(Callback):
                 y_list, y_pred_list = [], []
                 for x, y, label in model_handler.data_fitting.data_handler(key):
                     y_pred = _predict(model_handler, x=x, label=label, phase=key)
-                    y_ = model_handler.data_fitting.data_handler.undo_normalize_y(y)
-                    y_pred_ = model_handler.data_fitting.data_handler.undo_normalize_y(y_pred)
+                    y_ = model_handler.data_fitting.to_observed_target(y)
+                    y_pred_ = model_handler.data_fitting.to_observed_prediction(y_pred)
                     y_list.append(y_)
                     y_pred_list.append(y_pred_)
 
@@ -1069,7 +1070,7 @@ class ParityPlotSaver(Callback):
 
                 results[key] = [torch.vstack(y_list), torch.vstack(y_pred_list)]
 
-        for y_idx in range(model_handler.nn.output_dim):
+        for y_idx in range(output_dim):
             Plotter = _get_plotter_class()
             y_max_, y_min_ = y_max[0, y_idx].cpu(), y_min[0, y_idx].cpu()
             dy = (y_max_ - y_min_) * 0.1
