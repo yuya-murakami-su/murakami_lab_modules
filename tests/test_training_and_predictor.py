@@ -2,14 +2,14 @@ import numpy as np
 import pandas as pd
 import torch
 
-from murakami_lab_modules.data_fitting import BinaryClassificationFitting, DataFitting, MultiClassClassificationFitting
-from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.model_handler import ModelHandler
-from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import Optimizer
-from murakami_lab_modules.predictor import NeuralNetworkPredictor
-from murakami_lab_modules.regularization import Regularization
-from murakami_lab_modules.metrics import binary_accuracy_from_logits, multiclass_accuracy_from_logits
+from murakami_lab_modules.training import BinaryClassificationFitting, DataFitting, MultiClassClassificationFitting
+from murakami_lab_modules.data import DataHandler
+from murakami_lab_modules.training import ModelHandler
+from murakami_lab_modules.models import FeedForwardNeuralNetwork
+from murakami_lab_modules.training import Optimizer
+from murakami_lab_modules.models import NeuralNetworkPredictor
+from murakami_lab_modules.pinn import Regularization
+from murakami_lab_modules.evaluation import binary_accuracy_from_logits, multiclass_accuracy_from_logits
 
 
 class DummyInputGenerator:

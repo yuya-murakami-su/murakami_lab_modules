@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from murakami_lab_modules.differential import grad, hessian_diag, jacobian, laplacian, partial, partial2
+from murakami_lab_modules.pinn import grad, hessian_diag, jacobian, laplacian, partial, partial2
 
 
 def test_partial_jacobian_hessian_and_laplacian_for_known_function():

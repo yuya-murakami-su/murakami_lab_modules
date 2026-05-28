@@ -2,10 +2,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from murakami_lab_modules.data_fitting import DataFitting
-from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.model_handler import ModelHandler
-from murakami_lab_modules.model_selection import (
+from murakami_lab_modules.training import DataFitting
+from murakami_lab_modules.data import DataHandler
+from murakami_lab_modules.training import ModelHandler
+from murakami_lab_modules.evaluation import (
     CrossValidator,
     GridSearch,
     KFoldSplitter,
@@ -15,8 +15,8 @@ from murakami_lab_modules.model_selection import (
     iter_parameter_grid,
     sample_parameter_space,
 )
-from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.models import FeedForwardNeuralNetwork
+from murakami_lab_modules.training import Optimizer
 
 
 class CountingDataFitting(DataFitting):

@@ -1,56 +1,88 @@
 # murakami_lab_modules
 
-`murakami_lab_modules` is a small PyTorch-based toolkit for neural-network fitting and PINN-style regularization.
-It includes utilities for data loading, normalization, training loops, regularization terms, automatic differentiation,
-plotting callbacks, prediction, and cross-validation / hyper-parameter search.
+`murakami_lab_modules` is a PyTorch-based toolkit for small-data neural-network fitting and
+PINN-style regularization.
+
+The package is intentionally lightweight. It provides the training, data handling, automatic
+differentiation, regularization, logging, plotting, and model-selection utilities that are commonly
+needed in laboratory-scale regression and physics-informed modeling workflows, without wrapping the
+entire PyTorch ecosystem.
+
+## Features
+
+- Tabular and tensor data loading from CSV, NumPy, and PyTorch files
+- Train, validation, and test split management with reproducible indexing
+- Input and output normalization through replaceable normalizer classes
+- Simple feed-forward neural networks for regression, classification, and ODE-style call signatures
+- A compact training loop with callbacks, checkpointing, summaries, and optional history saving
+- PINN-oriented derivative helpers such as `partial`, `partial2`, `jacobian`, `hessian_diag`, and
+  `laplacian`
+- Regularization terms with static or automatically calibrated weights
+- Native lightweight batching by default, with optional `torch.utils.data.DataLoader`
+- Cross-validation, nested cross-validation, grid search, and random search
+- Plotting helpers for line, scatter, parity, loss, and contour plots
 
 ## Installation
 
-For a standard CPU-oriented Python environment:
+Python 3.11 or newer is required.
 
 ```bash
 pip install git+https://github.com/yuya-murakami-su/murakami_lab_modules.git
 ```
 
-PyTorch is a core dependency. If you need a specific CUDA build, install the PyTorch wheel recommended for your
-environment first, then install this package. Pip will keep the already installed compatible PyTorch package.
+PyTorch is a required dependency. If your environment needs a specific CUDA build, install the
+PyTorch wheel recommended for that machine first, then install this package.
 
 Optional plotting dependencies:
 
 ```bash
-pip install "murakami_lab_modules[plot]"
-pip install "murakami_lab_modules[all]"
+pip install "murakami_lab_modules[plot] @ git+https://github.com/yuya-murakami-su/murakami_lab_modules.git"
 ```
 
 For local development:
 
 ```bash
+git clone https://github.com/yuya-murakami-su/murakami_lab_modules.git
+cd murakami_lab_modules
 pip install -e ".[test,plot]"
 python -m pytest
 ```
 
-## Minimal Training Example
+## Basic Training
+
+The core workflow is:
+
+1. Load and split data with `DataHandler`.
+2. Wrap the data loss with `DataFitting`.
+3. Define a neural network and optimizer.
+4. Run training with `ModelHandler`.
 
 ```python
 import torch
 
-from murakami_lab_modules.data_fitting import DataFitting
-from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.model_handler import ModelHandler
-from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.data import DataHandler
+from murakami_lab_modules.models import FeedForwardNeuralNetwork
+from murakami_lab_modules.training import DataFitting, ModelHandler, Optimizer
 
 data_handler = DataHandler(
-    input_data_path="x.csv",
+    input_data_path="data.csv",
     input_columns=["x1", "x2"],
-    output_data_path="y.csv",
     output_columns=["y"],
     split_ratio=(0.8, 0.2),
     batch_size=32,
+    device_name="cpu",
+)
+
+nn = FeedForwardNeuralNetwork(
+    input_dim=2,
+    output_dim=1,
+    n_hidden_layers=2,
+    hidden_dim=64,
+    activation=torch.nn.Tanh(),
 )
 
 model_handler = ModelHandler(
-    nn=FeedForwardNeuralNetwork(input_dim=2, output_dim=1, n_hidden_layers=2, hidden_dim=64),
+    nn=nn,
     optimizer=Optimizer(torch.optim.Adam, lr=1e-3),
     data_fitting=DataFitting(data_handler, loss_fn=torch.nn.MSELoss()),
     train_epochs=1000,
@@ -59,134 +91,138 @@ model_handler = ModelHandler(
 model_handler()
 ```
 
-## Data Shapes
+Training creates a timestamped folder under `Model/` by default. The folder contains configuration
+metadata, data summaries, training history, and model state dicts when saving is enabled.
 
-`DataHandler` is designed for tabular data and homogeneous tensors with a sample axis first. Tensor data can be
-2D or higher dimensional, for example `[N, features]`, `[N, channels, length]`, or `[N, channels, height, width]`.
-Standard normalization computes statistics over the sample axis and preserves the remaining shape.
+## Core Concepts
 
-For variable-shaped samples or multiple heterogeneous inputs, use `StructuredDataset` directly or subclass it. In that
-case batches are list-backed when tensors cannot be stacked, and the model/loss code should define how those structures
-are consumed.
+### Data
 
-## Classification
+`DataHandler` owns data loading, split creation, normalization, and batching.
 
-The library is still regression/PINN-oriented, but simple classification is supported through separate fitting classes.
-For multi-class classification, keep targets as class indices and disable output normalization by using an integer
-output dtype.
+Supported file formats:
+
+- `.csv`
+- `.npy`
+- `.npz`
+- `.pt`
+- `.pth`
+
+CSV encoding is detected from common encodings by default. Use `csv_encoding=` when the file has a
+known encoding.
 
 ```python
-import torch
+from murakami_lab_modules.data import DataHandler
 
-from murakami_lab_modules.data_fitting import MultiClassClassificationFitting
-from murakami_lab_modules.data_handler import DataHandler
+data_handler = DataHandler(
+    input_data_path="measurements.csv",
+    input_columns=["temperature", "pressure"],
+    output_columns=["rate"],
+    label_columns=["sample_id"],
+    split_type="index_split",
+    train_indices=[0, 1, 2, 3],
+    valid_indices=[4, 5],
+    test_indices=[6, 7],
+)
+```
+
+For in-memory arrays or tensors:
+
+```python
+data_handler = DataHandler.from_tensors(
+    inputs=x,
+    outputs=y,
+    labels=sample_ids,
+    split_ratio=(0.8, 0.2),
+    batch_size=64,
+)
+```
+
+`DataHandler` targets homogeneous tensors with the sample axis first, for example `[N, features]`,
+`[N, channels, length]`, or `[N, channels, height, width]`. For variable-shaped samples or multiple
+heterogeneous inputs, use `StructuredDataset` directly or subclass it.
+
+### Normalization
+
+Normalization is implemented through normalizer classes rather than through hard-coded index flags.
+The default is standardization for floating-point inputs and outputs.
+
+```python
+from murakami_lab_modules.data import IdentityNormalizer, LogStandardNormalizer
 
 data_handler = DataHandler.from_tensors(
     inputs=x,
-    outputs=class_index,
-    output_dtype=torch.long,
-    batch_size=32,
-)
-data_fitting = MultiClassClassificationFitting(data_handler)
-```
-
-For binary classification with `BCEWithLogitsLoss`, use float targets and disable output normalization explicitly:
-
-```python
-from murakami_lab_modules.data_fitting import BinaryClassificationFitting
-
-data_handler = DataHandler.from_tensors(
-    inputs=x,
-    outputs=binary_target,
-    normalize_output=False,
-)
-data_fitting = BinaryClassificationFitting(data_handler)
-```
-
-`NeuralNetworkPredictor(..., postprocess='probability')` returns sigmoid/softmax probabilities, and
-`NeuralNetworkPredictor(..., postprocess='class')` returns predicted classes.
-
-## Losses and Metrics
-
-Use PyTorch's built-in losses such as `torch.nn.MSELoss`, `torch.nn.L1Loss`, `torch.nn.CrossEntropyLoss`, and
-`torch.nn.BCEWithLogitsLoss` whenever they fit. `murakami_lab_modules.losses` only contains small helpers that are not
-covered directly by PyTorch, such as relative and component-weighted regression losses. Per-sample evaluation functions
-and accuracy helpers live in `murakami_lab_modules.metrics`.
-
-## PINN-Style Regularization
-
-Define a subclass of `Regularization` and return one tensor per regularization term.
-
-```python
-from murakami_lab_modules.input_generator import InputGenerator
-from murakami_lab_modules.regularization import Regularization, TargetTotalRegularizationWeight
-
-
-class MyRegularization(Regularization):
-    def regularization(self, data_handler, nn):
-        x = self.input_generators[0]()
-        y = nn(x=x)
-        return [y]
-
-
-regularization = MyRegularization(
-    input_generators=[
-        InputGenerator(
-            n_samples=256,
-            input_range=((0.0, 1.0), (0.0, 1.0)),
-            sampling="sobol",
-        )
-    ],
-    term_names=["output_penalty"],
-    weight_policy=TargetTotalRegularizationWeight(target_total=1.0),
+    outputs=y,
+    input_normalizer=LogStandardNormalizer(epsilon=1e-8),
+    output_normalizer=IdentityNormalizer(),
 )
 ```
 
-## Callbacks
+Available normalizers:
 
-Callbacks own their own execution interval through `every`.
+- `IdentityNormalizer`
+- `StandardNormalizer`
+- `LogStandardNormalizer`
+
+Custom normalizers can subclass `BaseNormalizer`.
+
+### Models
+
+`FeedForwardNeuralNetwork` is a small fully connected network suitable for most tabular regression
+and PINN examples.
 
 ```python
-from murakami_lab_modules.callbacks import LossMonitor, PredictionResultSaver, PeriodicCheckpointSaver
+from murakami_lab_modules.models import FeedForwardNeuralNetwork
 
-callbacks = (
-    LossMonitor(every=10),
-    PredictionResultSaver(every=100),
-    PeriodicCheckpointSaver(every=1000),
+nn = FeedForwardNeuralNetwork(
+    input_dim=3,
+    output_dim=2,
+    n_hidden_layers=3,
+    hidden_dim=128,
+    dropout=0.1,
+    batch_norm=False,
 )
 ```
 
-## Plotting
+The network is a regular `torch.nn.Module`, so users can also provide their own PyTorch modules to
+`ModelHandler` as long as the module can be called with `nn(x=x)` or `nn(x)`.
 
-`Plotter` supports line plots, scatter plots, and contour plots. The built-in contour colormaps avoid rainbow palettes
-and are intended for research figures:
+### Data Fitting
+
+`DataFitting` computes the data loss. It can be subclassed when prediction requires labels,
+time integration, a custom forward path, or multiple loss terms.
 
 ```python
-from murakami_lab_modules.plotter import Plotter
+from murakami_lab_modules.training import DataFitting
 
-plotter = Plotter()
-plotter.contourf(x=x_grid, y=y_grid, z=z_grid, cmap="blue_white_red", colorbar_label="value")
-plotter.contour(x=x_grid, y=y_grid, z=z_grid, levels=10, label=True)
-plotter.save_fig("contour.png")
+data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
 ```
 
-Built-in colormap aliases are `blue_white_red`, `red_white_blue`, `white_orange`, and `white_blue`.
-
-## Optimizers and Learning-Rate Schedules
-
-`Optimizer` combines a PyTorch optimizer class with an optional learning-rate schedule.
+Classification is supported through explicit fitting classes:
 
 ```python
-from murakami_lab_modules.optimizer import (
-    Optimizer,
-    cosine_annealing_lr,
-    step_decay_lr,
-    warmup_decay_lr,
-)
+from murakami_lab_modules.training import BinaryClassificationFitting, MultiClassClassificationFitting
 
-optimizer = Optimizer(torch.optim.Adam, lr=1e-3)
-optimizer = Optimizer(torch.optim.Adam, lr_schedule=step_decay_lr(initial_lr=1e-3, step_size=1000, gamma=0.5))
-optimizer = Optimizer(torch.optim.Adam, lr_schedule=cosine_annealing_lr(initial_lr=1e-3, total_epochs=10_000))
+multi_class_fitting = MultiClassClassificationFitting(data_handler)
+binary_fitting = BinaryClassificationFitting(data_handler)
+```
+
+For multi-class classification, use integer class-index targets and set `output_dtype=torch.long`.
+For binary classification with logits, use float targets and disable output normalization.
+
+### Optimizers
+
+`Optimizer` combines a PyTorch optimizer class with optional learning-rate schedules.
+
+```python
+from murakami_lab_modules.training import Optimizer, cosine_annealing_lr, step_decay_lr
+
+optimizer = Optimizer(torch.optim.Adam, lr=1e-3, weight_decay=1e-6)
+
+scheduled_optimizer = Optimizer(
+    torch.optim.Adam,
+    lr_schedule=cosine_annealing_lr(initial_lr=1e-3, total_epochs=10_000),
+)
 ```
 
 Available schedule factories:
@@ -200,28 +236,174 @@ Available schedule factories:
 - `cosine_annealing_lr`
 - `polynomial_decay_lr`
 
-## Cross-Validation and Hyper-Parameter Search
+### Training
 
-`model_selection` intentionally uses a factory function so every fold/trial receives a fresh model, optimizer, and
-data handler.
+`ModelHandler` coordinates the model, data fitting, optional regularization, callbacks, summaries,
+and saved outputs.
+
+Important saving options:
+
+- `save_result=False`: do not create result folders or summary files
+- `save_model=False`: save metadata and history, but skip model state dicts
+- `save_history=False`: skip `evolution.csv`
+- `history_policy="sparse"` with `history_every=N`: keep only sparse history rows
+- `verbose=False`: disable progress output
 
 ```python
-from murakami_lab_modules.model_selection import CrossValidator, KFoldSplitter
+model_handler = ModelHandler(
+    nn=nn,
+    optimizer=optimizer,
+    data_fitting=data_fitting,
+    train_epochs=500,
+    save_model=False,
+    history_policy="sparse",
+    history_every=10,
+    verbose=False,
+)
+model_handler()
+```
+
+## PINN Regularization
+
+PINN-style training is built from three pieces:
+
+1. `InputGenerator` creates collocation points.
+2. Derivative helpers compute required differential terms.
+3. `Regularization` combines one or more residual tensors into a scalar loss.
+
+```python
+import torch
+
+from murakami_lab_modules.pinn import InputGenerator, Regularization, TargetTotalRegularizationWeight
+
+
+class HeatEquationRegularization(Regularization):
+    def regularization(self, data_handler, nn):
+        x = self.input_generators[0]()
+        y = nn(x=x)
+        _, d2y_dx2 = self.partial2(y, x, x_idx=0, y_idx=0)
+        return [d2y_dx2]
+
+
+input_generator = InputGenerator(
+    n_samples=256,
+    input_range=((0.0, 1.0),),
+    sampling="sobol",
+    requires_grad=True,
+)
+
+regularization = HeatEquationRegularization(
+    input_generators=[input_generator],
+    term_names=["heat_residual"],
+    weight_policy=TargetTotalRegularizationWeight(target_total=1.0),
+)
+
+model_handler = ModelHandler(
+    nn=nn,
+    optimizer=optimizer,
+    data_fitting=data_fitting,
+    regularization=regularization,
+    train_epochs=1000,
+)
+```
+
+Derivative helpers are available from `murakami_lab_modules.pinn`:
+
+- `grad`
+- `partial`
+- `partial2`
+- `jacobian`
+- `hessian_diag`
+- `laplacian`
+
+By default, unused gradients raise an error. Use `zero_if_unused=True` only when independence from
+the differentiated input is intentional.
+
+## Callbacks
+
+The training loop uses callbacks for monitoring, stopping, logging, plotting, and checkpointing.
+Each callback owns its execution interval through `every`. Lower `priority` values run earlier.
+
+```python
+from murakami_lab_modules.training import (
+    EarlyStopping,
+    GradientNormMonitor,
+    LearningRateLogger,
+    LossPlotSaver,
+    PredictionResultSaver,
+)
+
+callbacks = (
+    EarlyStopping(monitor="validation_loss", patience=100),
+    LearningRateLogger(every=1),
+    GradientNormMonitor(every=10),
+    LossPlotSaver(every=100),
+    PredictionResultSaver(every=500),
+)
+```
+
+Core callbacks for best-model tracking, history recording, final checkpoints, regularization
+reports, run summaries, and console progress are installed by `ModelHandler` automatically when the
+corresponding `ModelHandler` options are enabled.
+
+## Saved Outputs and Prediction
+
+A saved model directory typically contains:
+
+- `config.json`
+- `metadata/`
+- `metadata/data_summary.json`
+- `metadata/data_summary.csv`
+- `evolution.csv`
+- `run_summary.csv`
+- `regularization_weight_report.csv` when regularization is used
+- `state_dicts.pth` and `normalizer.pth` when `save_model=True`
+
+Use `NeuralNetworkPredictor` for inference from a saved model directory:
+
+```python
+from murakami_lab_modules.models import NeuralNetworkPredictor
+
+predictor = NeuralNetworkPredictor(model_path="Model/260528-120000-123")
+y_pred = predictor(x_new)
+```
+
+For classifiers:
+
+```python
+probability_predictor = NeuralNetworkPredictor(model_path=model_path, postprocess="probability")
+class_predictor = NeuralNetworkPredictor(model_path=model_path, postprocess="class")
+```
+
+`.pth` data and model files should be loaded only from trusted sources.
+
+## Cross-Validation and Search
+
+Model selection utilities use factory functions so each fold or trial receives a fresh model,
+optimizer, and data handler.
+
+```python
+from murakami_lab_modules.evaluation import CrossValidator, KFoldSplitter
 
 
 def model_factory(params, split, context):
     data_handler = DataHandler(
-        input_data_path="x.csv",
+        input_data_path="data.csv",
         input_columns=["x1", "x2"],
-        output_data_path="y.csv",
         output_columns=["y"],
         split_type="index_split",
         train_indices=split.train_indices,
         valid_indices=split.valid_indices,
         batch_size=params["batch_size"],
     )
+    nn = FeedForwardNeuralNetwork(
+        input_dim=2,
+        output_dim=1,
+        n_hidden_layers=2,
+        hidden_dim=params["hidden_dim"],
+    )
     return ModelHandler(
-        nn=FeedForwardNeuralNetwork(input_dim=2, output_dim=1, n_hidden_layers=1, hidden_dim=params["hidden_dim"]),
+        nn=nn,
         optimizer=Optimizer(torch.optim.Adam, lr=params["lr"]),
         data_fitting=DataFitting(data_handler),
         train_epochs=200,
@@ -235,25 +417,65 @@ cv = CrossValidator(
     splitter=KFoldSplitter(n_splits=5),
     indices=100,
 )
+
 results = cv.run(params={"lr": 1e-3, "batch_size": 32, "hidden_dim": 64})
 ```
 
-## Notes on Saved Models
+`GridSearch`, `RandomSearch`, and `NestedCrossValidator` are available from
+`murakami_lab_modules.evaluation`.
 
-Saved model folders contain:
+## Visualization
 
-- `config.json` and per-component metadata JSON files
-- `run_summary.csv`
-- `evolution.csv` when history saving is enabled
-- lightweight data summaries
-- `state_dicts.pth` and `normalizer.pth` when `save_model=True`
+Plotting is optional and requires the `plot` extra.
 
-History storage can be reduced for long runs or cross-validation with `history_policy='sparse'`, `'last'`, or `'none'`.
-Use `save_history=False` to skip `evolution.csv`, or add `HistoryLogger`/`CSVLogger` callbacks for custom CSV output.
-Set `evaluate_test=True` on `ModelHandler` when `run_summary.csv` should include a final test loss.
+```python
+from murakami_lab_modules.visualization import Plotter
 
-The library uses Python's standard `logging` package. By default it does not create persistent log files. Configure
-logging in your script when you want important messages to remain in the console or in a file:
+plotter = Plotter()
+plotter.scatter(x=x, y=y, label="data")
+plotter.plot(x=x_line, y=y_line, label="model")
+plotter.add_details(x_label="x", y_label="y", legend_inside=True)
+plotter.save_fig("fit.png")
+```
+
+Contour plots use restrained colormap aliases intended for research figures:
+
+```python
+plotter = Plotter()
+plotter.contourf(x=x_grid, y=y_grid, z=z_grid, cmap="blue_white_red", colorbar_label="value")
+plotter.contour(x=x_grid, y=y_grid, z=z_grid, levels=10, label=True)
+plotter.save_fig("contour.png")
+```
+
+Built-in aliases:
+
+- `blue_white_red`
+- `red_white_blue`
+- `white_orange`
+- `white_blue`
+
+## Package Layout
+
+The public API is grouped by purpose:
+
+- `murakami_lab_modules.data`: datasets, data loading, data loaders, normalizers
+- `murakami_lab_modules.models`: neural networks and saved-model prediction
+- `murakami_lab_modules.training`: fitting, optimization, training loop, callbacks
+- `murakami_lab_modules.pinn`: automatic differentiation, input generation, regularization
+- `murakami_lab_modules.evaluation`: losses, metrics, cross-validation, search
+- `murakami_lab_modules.visualization`: plotting helpers
+- `murakami_lab_modules.utils`: serialization, logging, device, and small utility functions
+
+Common classes are also exported lazily from the top-level package:
+
+```python
+from murakami_lab_modules import DataHandler, ModelHandler, Regularization
+```
+
+## Logging
+
+The package uses Python's standard `logging` module. Console progress is controlled by
+`ModelHandler(verbose=...)`. Persistent logs are not created unless configured by the user.
 
 ```python
 from murakami_lab_modules import utils
@@ -261,11 +483,17 @@ from murakami_lab_modules import utils
 utils.configure_logging(log_file="training.log")
 ```
 
-Configuration files are intended as audit metadata. Reproducible training should be based on your script plus the saved
-state dicts and metadata.
+## Development
 
-`.pth` data loading should be used only with files you trust. Model state dicts and normalizer files written by this
-library are loaded with PyTorch's restricted weights-only loader where possible.
+Run the test suite before publishing changes:
+
+```bash
+python -m pytest
+```
+
+The project favors small, explicit abstractions over large framework wrappers. When extending the
+library, prefer adding focused modules around stable concepts such as data, training, PINN,
+evaluation, visualization, or future analysis utilities.
 
 ## License
 

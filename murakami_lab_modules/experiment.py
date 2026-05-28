@@ -1,3 +1,5 @@
+"""Run-folder and metadata management for training results."""
+
 import time
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +12,12 @@ __all__ = ['RunManager']
 
 
 class RunManager:
+    """Create unique model directories and save run metadata.
+
+    ``ModelHandler`` owns training behavior; ``RunManager`` only handles the
+    filesystem convention for saved runs.
+    """
+
     def __init__(
             self,
             save_path: str | Path = 'Model',
@@ -22,10 +30,14 @@ class RunManager:
 
     @staticmethod
     def model_folder_timestamp() -> str:
+        """Return a timestamp suitable for result directory names."""
+
         now = datetime.now()
         return f'{now:%y%m%d-%H%M%S}-{now.microsecond // 1000:03d}'
 
     def prepare_model_folder(self) -> None:
+        """Create a unique result directory under ``save_path``."""
+
         base_model_name = self.original_model_name
         for _ in range(1000):
             timestamp = self.model_folder_timestamp()
@@ -42,6 +54,8 @@ class RunManager:
         raise RuntimeError(f'Failed to create a unique model folder under {self.save_path}.')
 
     def save_metadata(self, model_handler) -> None:
+        """Save configuration JSON files and lightweight data summaries."""
+
         config = {
             'format_version': 1,
             'nn': model_handler.nn.config_dict(),

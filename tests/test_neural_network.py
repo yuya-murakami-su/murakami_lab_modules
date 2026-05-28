@@ -1,7 +1,7 @@
 import torch
 
 from murakami_lab_modules import utils
-from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
+from murakami_lab_modules.models import FeedForwardNeuralNetwork
 
 
 def test_feed_forward_neural_network_forward_shape():

@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.dataset import DataLoader, Dataset, StructuredDataset, TorchDataLoader
-from murakami_lab_modules.normalizer import IdentityNormalizer, LogStandardNormalizer, StandardNormalizer
+from murakami_lab_modules.data import DataHandler
+from murakami_lab_modules.data import DataLoader, Dataset, StructuredDataset, TorchDataLoader
+from murakami_lab_modules.data import IdentityNormalizer, LogStandardNormalizer, StandardNormalizer
 
 
 def test_dataset_random_split_does_not_mutate_original():

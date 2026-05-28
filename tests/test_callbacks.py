@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 import torch
 
-from murakami_lab_modules.callbacks import (
+from murakami_lab_modules.training import (
     CSVLogger,
     Callback,
     BestCheckpointSaver,
@@ -19,10 +19,10 @@ from murakami_lab_modules.callbacks import (
     TerminateOnNaN,
     ConsoleLogger,
 )
-from murakami_lab_modules.data_fitting import DataFitting
-from murakami_lab_modules.model_handler import ModelHandler
-from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.training import DataFitting
+from murakami_lab_modules.training import ModelHandler
+from murakami_lab_modules.models import FeedForwardNeuralNetwork
+from murakami_lab_modules.training import Optimizer
 
 from tests.test_training_and_predictor import _make_data_handler
 

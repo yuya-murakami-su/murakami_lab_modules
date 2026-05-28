@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from murakami_lab_modules.input_generator import InputGenerator
+from murakami_lab_modules.pinn import InputGenerator
 
 
 def test_random_generator_can_cache_samples():

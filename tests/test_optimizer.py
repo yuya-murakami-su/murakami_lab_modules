@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from murakami_lab_modules.optimizer import (
+from murakami_lab_modules.training import (
     Optimizer,
     cosine_annealing_lr,
     exponential_decay_lr,

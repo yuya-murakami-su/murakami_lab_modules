@@ -1,7 +1,7 @@
 import pandas as pd
 import torch
 
-from murakami_lab_modules.regularization import (
+from murakami_lab_modules.pinn import (
     MatchDataLossRegularizationWeight,
     Regularization,
     TargetTotalRegularizationWeight,
