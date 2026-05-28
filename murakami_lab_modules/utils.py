@@ -11,11 +11,11 @@ def initialize_random_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
-def get_local_dict(locals_: dict) -> dict:
-    local_dict: dict = locals_
+def get_local_dict(locals_: dict[str, object]) -> dict[str, object]:
+    local_dict: dict[str, object] = locals_
     local_dict.pop('self')
     if 'kwargs' in locals_.keys():
-        kwargs: dict = locals_['kwargs']
+        kwargs: dict[str, object] = locals_['kwargs']
         local_dict.pop('kwargs')
         return local_dict | kwargs
     return local_dict
@@ -77,7 +77,7 @@ def save_txt(txt_name: str, **kwargs):
                     txt.write(f'{key}\t{type(value).__name__}\t{value}\n')
         txt.close()
 
-def load_txt(txt_name: str, default_value: dict = None):
+def load_txt(txt_name: str, default_value: dict[str, object] = None) -> dict[str, object]:
     kwargs = {}
     if os.path.exists(f'{txt_name}.txt'):
         with open(f'{txt_name}.txt', 'r', encoding='utf-8_sig') as txt:

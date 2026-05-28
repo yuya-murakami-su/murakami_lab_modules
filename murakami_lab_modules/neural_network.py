@@ -1,5 +1,5 @@
 import torch
-from typing import Callable
+from collections.abc import Callable
 from . import utils
 
 
@@ -14,7 +14,7 @@ class AbstractNeuralNetwork(torch.nn.Module):
             random_seed: int = 2025,
             **kwargs
     ):
-        self.locals: dict = utils.get_local_dict(locals())
+        self.locals: dict[str, object] = utils.get_local_dict(locals())
         utils.initialize_random_seed(random_seed)
         super().__init__()
 

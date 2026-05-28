@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import torch
 import copy
+from collections.abc import Callable
 from .neural_network import AbstractNeuralNetwork
 from .data_handler import DataHandler
 from .input_generator import InputGenerator
@@ -51,7 +52,7 @@ class DataFitting:
     def __init__(
             self,
             data_handler: DataHandler,
-            loss_criteria: callable = torch.nn.MSELoss(),
+            loss_criteria: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = torch.nn.MSELoss(),
             check_test: bool = False
     ):
         self.locals = utils.get_local_dict(locals())
@@ -69,11 +70,11 @@ class Regularization:
 
     def __init__(
             self,
-            input_generators: (InputGenerator,),
-            reg_weights: list,
+            input_generators: list[InputGenerator] | tuple[InputGenerator, ...],
+            reg_weights: list[float],
             reg_func_name: str = 'regularization',
-            reg_names: list = None,
-            reg_criteria: callable = torch.square,
+            reg_names: list[str] = None,
+            reg_criteria: Callable[[torch.Tensor], torch.Tensor] = torch.square,
             use_reg_prod: bool = False,
             reg_min: float = None
     ):
@@ -114,7 +115,7 @@ class Regularization:
     def regularization(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
         raise NotImplementedError
 
-    def _validate_regularization_outputs(self, regs):
+    def _validate_regularization_outputs(self, regs) -> list[torch.Tensor] | tuple[torch.Tensor, ...]:
         if not isinstance(regs, (list, tuple)):
             raise TypeError(
                 f'{self.reg_func_name}() must return list or tuple of torch.Tensor. '
@@ -142,7 +143,7 @@ class Regularization:
             self.__class__._different_n_points_warned = True
         return regs
 
-    def _get_regularization_mean(self, regs):
+    def _get_regularization_mean(self, regs: list[torch.Tensor] | tuple[torch.Tensor, ...]) -> torch.Tensor:
         reg_means = []
         full_regs = []
         for reg in regs:
@@ -163,7 +164,11 @@ class Regularization:
 
         return torch.stack(reg_means)
 
-    def get_regularization_value(self, nn: AbstractNeuralNetwork, data_handler: DataHandler = None):
+    def get_regularization_value(
+            self,
+            nn: AbstractNeuralNetwork,
+            data_handler: DataHandler = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         regs = self._validate_regularization_outputs(self.reg_func(data_handler=data_handler, nn=nn))
         reg_mean = self._get_regularization_mean(regs)
 
@@ -177,23 +182,259 @@ class Regularization:
         return reg_mean, reg_value
 
     @staticmethod
-    def grad(y: torch.Tensor, x: torch.Tensor, x_idx: int = None, y_idx: int = None):
+    def _normalize_indices(indices: int | list[int] | tuple[int, ...] | None, size: int, name: str) -> list[int]:
+        if indices is None:
+            return list(range(size))
+        if type(indices) is int:
+            indices = (indices,)
+        elif not isinstance(indices, (list, tuple)):
+            raise TypeError(f'{name} must be int, list[int], tuple[int, ...], or None. {type(indices)} was given.')
+
+        normalized = []
+        for idx in indices:
+            if type(idx) is not int:
+                raise TypeError(f'All elements of {name} must be int. {type(idx)} was given.')
+            if not -size <= idx < size:
+                raise IndexError(f'{name} contains {idx}, which is out of range for size {size}.')
+            normalized.append(idx % size)
+        return normalized
+
+    @staticmethod
+    def _normalize_y_indices(y: torch.Tensor, y_indices: int | list[int] | tuple[int, ...] | None) -> list[int | None]:
+        if y.ndim == 1:
+            if y_indices is None:
+                return [None]
+            normalized = Regularization._normalize_indices(y_indices, 1, 'y_indices')
+            return [None for _ in normalized]
+        if y.ndim < 1:
+            raise ValueError(f'y must have at least 1 dimension. y.shape={tuple(y.shape)}.')
+        return Regularization._normalize_indices(y_indices, y.shape[1], 'y_indices')
+
+    @staticmethod
+    def _normalize_x_indices(x: torch.Tensor, x_indices: int | list[int] | tuple[int, ...] | None) -> list[int]:
+        if x.ndim < 2:
+            raise ValueError(f'x_indices requires x.ndim >= 2. x.shape={tuple(x.shape)}.')
+        return Regularization._normalize_indices(x_indices, x.shape[1], 'x_indices')
+
+    @staticmethod
+    def grad(
+            y: torch.Tensor,
+            x: torch.Tensor,
+            x_idx: int = None,
+            y_idx: int = None,
+            zero_if_unused: bool = False,
+            keepdim: bool = False
+    ):
+        if not torch.is_tensor(y):
+            raise TypeError(f'y must be torch.Tensor. {type(y)} was given.')
+        if not torch.is_tensor(x):
+            raise TypeError(f'x must be torch.Tensor. {type(x)} was given.')
+        if not x.requires_grad:
+            raise ValueError(f'x must require grad. x.requires_grad={x.requires_grad}.')
+
+        if y_idx is not None:
+            if y.ndim < 2:
+                raise ValueError(f'y_idx requires y.ndim >= 2. y.shape={tuple(y.shape)}.')
+            if not -y.shape[1] <= y_idx < y.shape[1]:
+                raise IndexError(f'y_idx={y_idx} is out of range for y.shape={tuple(y.shape)}.')
+
+        if x_idx is not None:
+            if x.ndim < 2:
+                raise ValueError(f'x_idx requires x.ndim >= 2. x.shape={tuple(x.shape)}.')
+            if not -x.shape[1] <= x_idx < x.shape[1]:
+                raise IndexError(f'x_idx={x_idx} is out of range for x.shape={tuple(x.shape)}.')
+            normalized_x_idx = x_idx % x.shape[1]
+
+        def select_x_idx(dy_dx: torch.Tensor):
+            if x_idx is None:
+                return dy_dx
+            elif keepdim:
+                return dy_dx[:, normalized_x_idx:normalized_x_idx + 1]
+            else:
+                return dy_dx[:, x_idx]
+
+        if not y.requires_grad:
+            if zero_if_unused:
+                return select_x_idx(x * 0.0)
+            raise ValueError(f'y must require grad. y.requires_grad={y.requires_grad}.')
+
         if y_idx is None:
             grad_outputs = torch.ones_like(y)
         else:
             grad_outputs = torch.zeros_like(y)
             grad_outputs[:, y_idx] = 1.0
-        dy_dx = torch.autograd.grad(
-            inputs=x,
-            outputs=y,
-            grad_outputs=grad_outputs,
-            retain_graph=True,
-            create_graph=True
-        )[0]
+
+        try:
+            dy_dx = torch.autograd.grad(
+                inputs=x,
+                outputs=y,
+                grad_outputs=grad_outputs,
+                retain_graph=True,
+                create_graph=True,
+                allow_unused=zero_if_unused
+            )[0]
+        except RuntimeError as e:
+            if 'not have been used in the graph' not in str(e):
+                raise
+            raise RuntimeError(
+                f'Failed to compute grad(y, x) because y does not depend on x. '
+                f'y.shape={tuple(y.shape)}, x.shape={tuple(x.shape)}, '
+                f'x_idx={x_idx}, y_idx={y_idx}. If y is intentionally independent of x, '
+                f'set zero_if_unused=True.'
+            ) from e
+
+        if dy_dx is None:
+            dy_dx = x * 0.0
+        elif zero_if_unused and not dy_dx.requires_grad:
+            dy_dx = dy_dx + x * 0.0
+
+        return select_x_idx(dy_dx)
+
+    @staticmethod
+    def partial(
+            y: torch.Tensor,
+            x: torch.Tensor,
+            x_idx: int,
+            y_idx: int = None,
+            zero_if_unused: bool = False,
+            keepdim: bool = False
+    ) -> torch.Tensor:
         if x_idx is None:
-            return dy_dx
-        else:
-            return dy_dx[:, x_idx]
+            raise ValueError('x_idx must be given for partial().')
+        return Regularization.grad(
+            y=y,
+            x=x,
+            x_idx=x_idx,
+            y_idx=y_idx,
+            zero_if_unused=zero_if_unused,
+            keepdim=keepdim
+        )
+
+    @staticmethod
+    def partial2(
+            y: torch.Tensor,
+            x: torch.Tensor,
+            x_idx: int,
+            y_idx: int = None,
+            zero_if_unused: bool = False,
+            keepdim: bool = False
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        dy_dx = Regularization.partial(
+            y=y,
+            x=x,
+            x_idx=x_idx,
+            y_idx=y_idx,
+            zero_if_unused=zero_if_unused,
+            keepdim=keepdim
+        )
+        d2y_dx2 = Regularization.partial(
+            y=dy_dx,
+            x=x,
+            x_idx=x_idx,
+            zero_if_unused=zero_if_unused or not dy_dx.requires_grad,
+            keepdim=keepdim
+        )
+        return dy_dx, d2y_dx2
+
+    @staticmethod
+    def second_partial(
+            y: torch.Tensor,
+            x: torch.Tensor,
+            x_idx: int,
+            y_idx: int = None,
+            zero_if_unused: bool = False,
+            keepdim: bool = False
+    ) -> torch.Tensor:
+        return Regularization.partial2(
+            y=y,
+            x=x,
+            x_idx=x_idx,
+            y_idx=y_idx,
+            zero_if_unused=zero_if_unused,
+            keepdim=keepdim
+        )[1]
+
+    @staticmethod
+    def jacobian(
+            y: torch.Tensor,
+            x: torch.Tensor,
+            y_indices: int | list[int] | tuple[int, ...] = None,
+            x_indices: int | list[int] | tuple[int, ...] = None,
+            zero_if_unused: bool = False
+    ) -> torch.Tensor:
+        y_indices = Regularization._normalize_y_indices(y, y_indices)
+        x_indices = Regularization._normalize_x_indices(x, x_indices)
+        jacobian = []
+        for y_idx in y_indices:
+            row = [
+                Regularization.partial(
+                    y=y,
+                    x=x,
+                    x_idx=x_idx,
+                    y_idx=y_idx,
+                    zero_if_unused=zero_if_unused,
+                    keepdim=True
+                )
+                for x_idx in x_indices
+            ]
+            jacobian.append(torch.cat(row, dim=1))
+        return torch.stack(jacobian, dim=1)
+
+    @staticmethod
+    def hessian_diag(
+            y: torch.Tensor,
+            x: torch.Tensor,
+            y_indices: int | list[int] | tuple[int, ...] = None,
+            x_indices: int | list[int] | tuple[int, ...] = None,
+            zero_if_unused: bool = False,
+            return_first: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        y_indices = Regularization._normalize_y_indices(y, y_indices)
+        x_indices = Regularization._normalize_x_indices(x, x_indices)
+        jacobian = []
+        hessian_diag = []
+        for y_idx in y_indices:
+            jacobian_row = []
+            hessian_diag_row = []
+            for x_idx in x_indices:
+                dy_dx, d2y_dx2 = Regularization.partial2(
+                    y=y,
+                    x=x,
+                    x_idx=x_idx,
+                    y_idx=y_idx,
+                    zero_if_unused=zero_if_unused,
+                    keepdim=True
+                )
+                jacobian_row.append(dy_dx)
+                hessian_diag_row.append(d2y_dx2)
+            jacobian.append(torch.cat(jacobian_row, dim=1))
+            hessian_diag.append(torch.cat(hessian_diag_row, dim=1))
+
+        jacobian = torch.stack(jacobian, dim=1)
+        hessian_diag = torch.stack(hessian_diag, dim=1)
+        if return_first:
+            return jacobian, hessian_diag
+        return hessian_diag
+
+    @staticmethod
+    def laplacian(
+            y: torch.Tensor,
+            x: torch.Tensor,
+            y_indices: int | list[int] | tuple[int, ...] = None,
+            x_indices: int | list[int] | tuple[int, ...] = None,
+            zero_if_unused: bool = False,
+            keepdim: bool = False
+    ) -> torch.Tensor:
+        laplacian = Regularization.hessian_diag(
+            y=y,
+            x=x,
+            y_indices=y_indices,
+            x_indices=x_indices,
+            zero_if_unused=zero_if_unused
+        ).sum(dim=2)
+        if laplacian.shape[1] == 1 and not keepdim:
+            return laplacian[:, 0]
+        return laplacian
 
 
 class ModelHandler:
@@ -212,7 +453,7 @@ class ModelHandler:
             recalculate_valid_loss: bool = True,
             model_name: str = None,
             callback_epoch: int = None,
-            callbacks: tuple = None,
+            callbacks: tuple[object, ...] = None,
             random_seed: int = 2025,
             **kwargs
     ):
@@ -401,7 +642,7 @@ class ModelHandler:
         else:
             return self._reg_step()
 
-    def _average_data_reg_losses(self, losses: list, batch_sizes: list):
+    def _average_data_reg_losses(self, losses: list[dict], batch_sizes: list[int]) -> dict[str, object]:
         n_data = sum(batch_sizes)
         averaged = {
             'total': sum(loss['total'] * n for loss, n in zip(losses, batch_sizes)) / n_data,
@@ -487,13 +728,13 @@ class ModelHandler:
             'terms': self._regularization_terms_to_dict(reg_mean)
         }
 
-    def _regularization_terms_to_dict(self, reg_mean: np.ndarray):
+    def _regularization_terms_to_dict(self, reg_mean: np.ndarray) -> dict[str, float]:
         return {
             name: value.item() if hasattr(value, 'item') else float(value)
             for name, value in zip(self.regularization.reg_names, reg_mean)
         }
 
-    def _update_best_loss(self, valid: dict):
+    def _update_best_loss(self, valid: dict[str, object]) -> None:
         current_loss = valid['total']
         if self.best_loss is None or self.best_loss > current_loss:
             self.best_loss = current_loss
@@ -502,7 +743,7 @@ class ModelHandler:
         else:
             self.best_updated += 1
 
-    def _update_evolution(self, train: dict, valid: dict):
+    def _update_evolution(self, train: dict[str, object], valid: dict[str, object]) -> None:
         record = {'epoch': self.epoch}
         if self.has_data:
             if self.has_reg:
@@ -627,7 +868,7 @@ class ModelHandler:
         }
 
     def get_loss_info_fnc(self, need_data: bool = True, need_reg: bool = True):
-        def get_xy_from_keys(evolution: list, keys: list, labels: list):
+        def get_xy_from_keys(evolution: list[dict], keys: list[str], labels: list[str]):
             if len(evolution) == 0:
                 return np.empty([0]), [np.empty([0]) for _ in keys], labels
             df = pd.DataFrame(evolution)
@@ -646,7 +887,7 @@ class ModelHandler:
                     labels = (['Train (data)', 'Valid (total)', 'Valid (data)', 'Valid (reg)'] +
                               self.regularization.reg_names)
 
-                    def get_xy(evolution: list, _: int):
+                    def get_xy(evolution: list[dict], _: int):
                         return get_xy_from_keys(evolution, keys, labels)
 
                 elif need_data:
@@ -654,7 +895,7 @@ class ModelHandler:
                     keys = ['train_data', 'valid_data']
                     labels = ['Train (data)', 'Valid (data)']
 
-                    def get_xy(evolution: list, _: int):
+                    def get_xy(evolution: list[dict], _: int):
                         return get_xy_from_keys(evolution, keys, labels)
 
                 elif need_reg:
@@ -662,7 +903,7 @@ class ModelHandler:
                     keys = ['valid_' + r for r in self.regularization.reg_names]
                     labels = self.regularization.reg_names
 
-                    def get_xy(evolution: list, _: int):
+                    def get_xy(evolution: list[dict], _: int):
                         return get_xy_from_keys(evolution, keys, labels)
 
                 else:
@@ -672,13 +913,13 @@ class ModelHandler:
                 keys = ['train', 'valid']
                 labels = ['Train', 'Valid']
 
-                def get_xy(evolution: list, _: int):
+                def get_xy(evolution: list[dict], _: int):
                     return get_xy_from_keys(evolution, keys, labels)
         else:
             n_data = 1 + self.regularization.n_reg
             keys = ['reg_total'] + self.regularization.reg_names
             labels = ['Reg (all)'] + self.regularization.reg_names
 
-            def get_xy(evolution: list, _: int):
+            def get_xy(evolution: list[dict], _: int):
                 return get_xy_from_keys(evolution, keys, labels)
         return n_data, get_xy

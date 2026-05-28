@@ -4,12 +4,18 @@ import os
 from .neural_network import AbstractNeuralNetwork
 from . import utils
 
+VariableSpec = int | float | tuple[float, float] | list[float]
 
 class AbstractPredictor:
     def __init__(self):
         self.model = None
 
-    def predict_with_1_variable(self, variables: tuple, n_step: int = 100, return_torch: bool = False):
+    def predict_with_1_variable(
+            self,
+            variables: tuple[VariableSpec, ...],
+            n_step: int = 100,
+            return_torch: bool = False
+    ):
         n_total_variable = len(variables)
         n_variable = 0
         variable_idx = None
@@ -47,8 +53,8 @@ class AbstractPredictor:
 
     def predict_with_2_variable(
             self,
-            variables: tuple,
-            n_step: int | tuple = 100,
+            variables: tuple[VariableSpec, ...],
+            n_step: int | tuple[int, int] | list[int] = 100,
             return_torch: bool = False,
             return_grid: bool = True,
             squeeze_output: bool = True

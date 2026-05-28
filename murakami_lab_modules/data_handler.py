@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 from . import utils
 
+IndexLike = torch.Tensor | np.ndarray
+
 class DataHandler:
     _device_warned = False
     _std_warned = False
@@ -11,15 +13,15 @@ class DataHandler:
     def __init__(
             self,
             input_data_path: str,
-            input_idx: list,
-            output_idx: list,
+            input_idx: list[int | str],
+            output_idx: list[int | str],
             batch_size: int,
             device_name: str,
             label_data_path: str = None,
-            label_idx: list = None,
+            label_idx: list[int | str] = None,
             output_data_path: str = None,
-            unnormalized_input_idx: list = None,
-            unnormalized_output_idx: list = None,
+            unnormalized_input_idx: list[int] = None,
+            unnormalized_output_idx: list[int] = None,
             split_type: str = 'random_split',
             is_validation_data_batched: bool = False,
             use_train_as_valid: bool = False,
@@ -83,7 +85,7 @@ class DataHandler:
         self.labels = self.labels.to(self.device)
 
     @staticmethod
-    def _load_datafile(data_path: str, indices: list) -> torch.Tensor:
+    def _load_datafile(data_path: str, indices: list[int | str]) -> torch.Tensor:
         if data_path[-4:] == '.csv':
             data_df = pd.read_csv(data_path, encoding='cp932', index_col=None)
             if type(indices[0]) is str:
@@ -112,7 +114,11 @@ class DataHandler:
         self.normed_outputs, self.output_ave, self.output_std = (
             self._default_normalizer(self.outputs, self.unnormalized_output_idx))
 
-    def _default_normalizer(self, data: torch.Tensor, avoid_indices: list) -> (torch.Tensor, torch.Tensor):
+    def _default_normalizer(
+            self,
+            data: torch.Tensor,
+            avoid_indices: list[int] | None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         ave = data.mean(dim=0, keepdim=True)
         std = data.std(dim=0, keepdim=True)
 
@@ -131,7 +137,7 @@ class DataHandler:
         return normalized, ave, std
 
     @staticmethod
-    def _normalize_with_stats(data: torch.Tensor, ave: torch.Tensor, std: torch.Tensor):
+    def _normalize_with_stats(data: torch.Tensor, ave: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
         if data.numel() == 0:
             return data
         return (data - ave) / std
@@ -179,10 +185,10 @@ class DataHandler:
             inputs = self.inputs
             outputs = self.outputs
         self.dataset = Dataset(inputs, outputs, self.labels)
-        self.n_data: dict = {'all': self.dataset.n_data}
-        self.datasets: dict = {'all': self.dataset}
+        self.n_data: dict[str, int] = {'all': self.dataset.n_data}
+        self.datasets: dict[str, Dataset] = {'all': self.dataset}
 
-    def _random_split(self, split_ratio: tuple = None, **_: dict):
+    def _random_split(self, split_ratio: tuple[float, ...] = None, **_: object):
         if split_ratio is None:
             raise ValueError('split_ratio must be specified for _random_split')
 
@@ -193,10 +199,10 @@ class DataHandler:
 
     def _index_split(
             self,
-            train_indices: torch.Tensor | np.ndarray = None,
-            valid_indices: torch.Tensor | np.ndarray = None,
-            test_indices: torch.Tensor | np.ndarray = None,
-            **_: dict
+            train_indices: IndexLike = None,
+            valid_indices: IndexLike = None,
+            test_indices: IndexLike = None,
+            **_: object
     ):
         if train_indices is None:
             raise ValueError('indices must be specified for _index_split')
@@ -281,7 +287,7 @@ class Dataset:
         else:
             self.n_data = len(inputs)
 
-    def random_split(self, split_ratio: tuple):
+    def random_split(self, split_ratio: tuple[float, ...]):
         if len(split_ratio) == 1:
             if split_ratio[0] > 0.999:
                 n_train = int(self.n_data * split_ratio[0])
@@ -323,7 +329,7 @@ class Dataset:
             test = self.empty_dataset()
         return train, valid, test
 
-    def index_split(self, indices: np.ndarray | torch.Tensor):
+    def index_split(self, indices: IndexLike):
         if type(self.inputs) is torch.Tensor:
             return Dataset(self.inputs[indices], self.outputs[indices], self.labels[indices])
 
@@ -361,7 +367,7 @@ class Dataset:
             return self.inputs, self.outputs, self.labels
 
     @staticmethod
-    def empty_dataset():
+    def empty_dataset() -> 'Dataset':
         return Dataset(torch.empty([0]), torch.empty([0]), torch.empty([0]))
 
 

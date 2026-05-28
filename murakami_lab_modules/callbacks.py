@@ -2,6 +2,7 @@ import os
 import torch
 import pandas as pd
 import numpy as np
+from collections.abc import Callable
 from murakami_lab_modules.plotter import Plotter
 
 
@@ -77,8 +78,11 @@ class SaveLossMonitor(Callback):
 class SavePredictionResults(Callback):
     def __init__(
             self,
-            prediction_metrics: tuple = (mse_error, relative_error),
-            normalized_metrics: tuple = (),
+            prediction_metrics: tuple[Callable[[torch.Tensor, torch.Tensor], torch.Tensor], ...] = (
+                    mse_error,
+                    relative_error
+            ),
+            normalized_metrics: tuple[Callable[[torch.Tensor, torch.Tensor], torch.Tensor], ...] = (),
             call_during_training: bool = False
     ):
         self.prediction_metrics = prediction_metrics
@@ -150,7 +154,7 @@ class SaveParityPlot(Callback):
     def __init__(
             self,
             call_during_training: bool = False,
-            fig_size: tuple = (8, 8)
+            fig_size: tuple[float, float] = (8, 8)
     ):
         self.call_during_training = call_during_training
         self.fig_size = fig_size

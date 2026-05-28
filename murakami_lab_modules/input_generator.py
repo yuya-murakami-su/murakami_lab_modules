@@ -37,7 +37,7 @@ class InputGenerator:
         else:
             self.generator = getattr(self, f'_{distribution}')(**kwargs)
 
-    def _random_distribution(self, input_range: tuple = None, **_: dict):
+    def _random_distribution(self, input_range: tuple[tuple[float, float], ...] = None, **_: object):
         if input_range is None:
             raise ValueError('input_range must be given when random distribution is chosen.')
         for range_ in input_range:
@@ -66,7 +66,7 @@ class InputGenerator:
 
         return get_distribution
 
-    def _fixed_random_distribution(self, input_range: tuple = None, **_: dict):
+    def _fixed_random_distribution(self, input_range: tuple[tuple[float, float], ...] = None, **_: object):
         if input_range is None:
             raise ValueError('input_range must be given when random distribution is chosen.')
         for range_ in input_range:
@@ -80,7 +80,7 @@ class InputGenerator:
 
         return get_distribution
 
-    def _fixed_distribution(self, inputs: tuple = None, **_: dict):
+    def _fixed_distribution(self, inputs: tuple[float, ...] | list[float] = None, **_: object):
         if inputs is None:
             raise ValueError('inputs must be given when random distribution is chosen.')
         distribution = torch.tensor(inputs, dtype=torch.float32, device=self.device)

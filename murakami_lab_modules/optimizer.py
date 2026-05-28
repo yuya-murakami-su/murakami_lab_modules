@@ -1,13 +1,13 @@
 import torch
 import numpy as np
-from typing import Iterable
+from collections.abc import Callable, Iterable
 from . import utils
 
 
 class AbstractOptimizer:
     def __init__(
             self,
-            algorithm: callable = torch.optim.Adam,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             **kwargs
     ):
         self.locals = utils.get_local_dict(locals())
@@ -22,7 +22,7 @@ class AbstractOptimizer:
         else:
             self.optimizer = self.algorithm(parameters, lr=self.lr_function(0))
 
-    def get_lr_function(self) -> callable:
+    def get_lr_function(self) -> Callable[[int], float]:
         raise NotImplementedError
 
     def update_lr(self, epoch: int):
@@ -49,7 +49,7 @@ class AbstractOptimizer:
 class Optimizer(AbstractOptimizer):
     def __init__(
             self,
-            algorithm: callable = torch.optim.Adam,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             lr: float = 1e-3,
             **kwargs
     ):
@@ -61,7 +61,7 @@ class Optimizer(AbstractOptimizer):
             **kwargs
         )
 
-    def get_lr_function(self) -> callable:
+    def get_lr_function(self) -> Callable[[int], float]:
         def lr_function(_: int):
             return self.lr
         return lr_function
@@ -73,7 +73,7 @@ class OptimizerWithWarmup(AbstractOptimizer):
             init_epoch: int,
             final_lr: float = 1e-3,
             log_scale: bool = True,
-            algorithm: callable = torch.optim.Adam,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             **kwargs
     ):
         self.init_lr = init_lr
@@ -91,7 +91,7 @@ class OptimizerWithWarmup(AbstractOptimizer):
         )
 
 
-    def get_lr_function(self) -> callable:
+    def get_lr_function(self) -> Callable[[int], float]:
         if self.log_scale:
             def lr_function(epoch: int):
                 if epoch < self.init_epoch:
@@ -116,7 +116,7 @@ class OptimizerWithWarmupAndDecay(AbstractOptimizer):
             final_epoch: int,
             final_lr: float,
             log_scale: bool = True,
-            algorithm: callable = torch.optim.Adam,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             **kwargs
     ):
         self.init_lr = init_lr
@@ -135,7 +135,7 @@ class OptimizerWithWarmupAndDecay(AbstractOptimizer):
             **kwargs
         )
 
-    def get_lr_function(self):
+    def get_lr_function(self) -> Callable[[int], float]:
         if self.log_scale:
             def lr_function(epoch: int):
                 if epoch < self.mid_epoch:
@@ -163,7 +163,7 @@ class OptimizerWithInverseDecay(AbstractOptimizer):
             init_lr: float,
             half_epoch: int,
             final_lr: float = None,
-            algorithm: callable = torch.optim.Adam,
+            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             **kwargs
     ):
         self.init_lr = init_lr
@@ -178,7 +178,7 @@ class OptimizerWithInverseDecay(AbstractOptimizer):
             **kwargs
         )
 
-    def get_lr_function(self):
+    def get_lr_function(self) -> Callable[[int], float]:
         if self.final_lr is None:
             def lr_function(epoch: int):
                 return self.init_lr / (1 + epoch / self.half_epoch)
