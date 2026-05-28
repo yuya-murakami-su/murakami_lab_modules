@@ -8,30 +8,21 @@ from .neural_network import AbstractNeuralNetwork
 
 __all__ = ['DataFitting']
 
-logger = utils.get_logger(__name__)
-
 
 class DataFitting:
     def __init__(
             self,
             data_handler: DataHandler,
             loss_criteria: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = torch.nn.MSELoss(),
-            check_test: bool = False
     ):
         self.locals = utils.get_local_dict(locals())
         self.data_handler = data_handler
         self.loss_criteria = loss_criteria
-        self.check_test = check_test
         self._nn_call_styles: dict[int, str] = {}
-
-        if data_handler.n_data['test'] == 0 and self.check_test:
-            logger.warning('check_test was set to True while no test data is available.')
-            self.check_test = False
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
             'loss_criteria': self.loss_criteria,
-            'check_test': self.check_test
         })
 
     def compute_loss(

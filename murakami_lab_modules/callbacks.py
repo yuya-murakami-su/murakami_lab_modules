@@ -770,11 +770,13 @@ class RunSummaryLogger(Callback):
     def __init__(
             self,
             summary_path: str | Path = 'run_summary',
+            evaluate_test: bool = False,
             show_test: bool = True,
             priority: int = 500,
     ):
         super().__init__(every=None, run_on_train_end=True, priority=priority)
         self.summary_path = Path(summary_path)
+        self.evaluate_test = evaluate_test
         self.show_test = show_test
         self.columns = [
             'time',
@@ -803,7 +805,12 @@ class RunSummaryLogger(Callback):
         model_handler.run_summary = self.run_summary
 
     def _test_loss(self, model_handler) -> float:
-        if not (model_handler.has_data and model_handler.data_fitting.check_test):
+        if not self.evaluate_test:
+            return np.nan
+        if not model_handler.has_data:
+            return np.nan
+        if model_handler.data_fitting.data_handler.n_data['test'] == 0:
+            logger.warning('evaluate_test=True, but no test data is available.')
             return np.nan
         if model_handler.has_reg:
             return model_handler._get_loss('test')['data']

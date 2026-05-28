@@ -182,6 +182,7 @@ Saved model folders contain:
 
 History storage can be reduced for long runs or cross-validation with `history_policy='sparse'`, `'last'`, or `'none'`.
 Use `save_history=False` to skip `evolution.csv`, or add `HistoryLogger`/`CSVLogger` callbacks for custom CSV output.
+Set `evaluate_test=True` on `ModelHandler` when `run_summary.csv` should include a final test loss.
 
 The library uses Python's standard `logging` package. By default it does not create persistent log files. Configure
 logging in your script when you want important messages to remain in the console or in a file:

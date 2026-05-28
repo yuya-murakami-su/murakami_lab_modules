@@ -90,6 +90,44 @@ def test_model_handler_trains_one_epoch_and_saves_files(tmp_path):
         'stop_reason',
         'n_epochs',
     ]
+    assert pd.isna(summary.loc[0, 'test_loss'])
+
+
+def test_model_handler_can_evaluate_test_loss_in_run_summary(tmp_path):
+    x_path = tmp_path / 'x.csv'
+    y_path = tmp_path / 'y.csv'
+    pd.DataFrame({'x': [0.0, 1.0, 2.0, 3.0]}).to_csv(x_path, index=False)
+    pd.DataFrame({'y': [0.0, 2.0, 4.0, 6.0]}).to_csv(y_path, index=False)
+    data_handler = DataHandler(
+        input_data_path=str(x_path),
+        input_idx=['x'],
+        output_data_path=str(y_path),
+        output_idx=['y'],
+        batch_size=2,
+        split_type='index_split',
+        train_indices=[0, 1],
+        test_indices=[2, 3],
+        use_train_as_valid=True,
+        device_name='cpu',
+    )
+    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=1,
+        save_path=str(tmp_path / 'Model'),
+        summary_path=str(tmp_path / 'run_summary'),
+        evaluate_test=True,
+        verbose=False,
+    )
+
+    model_handler()
+
+    summary = pd.read_csv(tmp_path / 'run_summary.csv')
+    assert pd.notna(summary.loc[0, 'test_loss'])
 
 
 def test_model_handler_can_skip_heavy_model_files(tmp_path):

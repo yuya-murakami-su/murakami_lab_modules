@@ -37,6 +37,7 @@ class ModelHandler:
             history_every: int = 1,
             keep_best_history: bool = True,
             keep_last_history: bool = True,
+            evaluate_test: bool = False,
             verbose: bool = True,
             **kwargs
     ):
@@ -72,6 +73,7 @@ class ModelHandler:
         self.history_every = history_every
         self.keep_best_history = keep_best_history
         self.keep_last_history = keep_last_history
+        self.evaluate_test = evaluate_test
         self.verbose = verbose
 
         self._validate_inputs()
@@ -105,6 +107,7 @@ class ModelHandler:
             'history_every': self.history_every,
             'keep_best_history': self.keep_best_history,
             'keep_last_history': self.keep_last_history,
+            'evaluate_test': self.evaluate_test,
             'verbose': self.verbose,
             **self.kwargs
         })
@@ -176,6 +179,7 @@ class ModelHandler:
                 core_callbacks.append(RegularizationReportSaver())
             core_callbacks.append(RunSummaryLogger(
                 summary_path=self.summary_path,
+                evaluate_test=self.evaluate_test,
                 show_test=self.verbose,
             ))
         self.callbacks = core_callbacks + user_callbacks
