@@ -15,11 +15,6 @@ __all__ = [
     'StepDecayOptimizer',
     'CosineAnnealingOptimizer',
     'PolynomialDecayOptimizer',
-    'AbstractOptimizer',
-    'Optimizer',
-    'OptimizerWithWarmup',
-    'OptimizerWithWarmupAndDecay',
-    'OptimizerWithInverseDecay',
 ]
 
 
@@ -55,38 +50,47 @@ class OptimizerBase:
             self,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **schedule_params
     ):
         self.locals = utils.get_local_dict(locals())
         self.algorithm = algorithm
         self.optimizer_params = dict(optimizer_params or {})
+        self.zero_grad_set_to_none = zero_grad_set_to_none
         self.schedule_params = schedule_params
         self.lr_function = self.get_lr_function()
         self.optimizer = None
+        self._last_lr_epoch = None
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
             'algorithm': self.algorithm,
             'optimizer_params': self.optimizer_params,
+            'zero_grad_set_to_none': self.zero_grad_set_to_none,
             **self.schedule_params,
         })
 
     def set_parameters(self, parameters: Iterable):
         self.optimizer = self.algorithm(parameters, lr=self.lr_function(0), **self.optimizer_params)
+        self._last_lr_epoch = 0
 
     def get_lr_function(self) -> Callable[[int], float]:
         raise NotImplementedError
 
     def update_lr(self, epoch: int):
+        if epoch == self._last_lr_epoch:
+            return
+        lr = self.lr_function(epoch)
         for param_group in self.optimizer.param_groups:
-            param_group['lr'] = self.lr_function(epoch)
+            param_group['lr'] = lr
+        self._last_lr_epoch = epoch
 
     def step(self, epoch: int):
         self.update_lr(epoch)
         self.optimizer.step()
 
     def zero_grad(self):
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=self.zero_grad_set_to_none)
 
     def current_lr(self) -> float:
         return self.optimizer.param_groups[0]['lr']
@@ -96,6 +100,7 @@ class OptimizerBase:
 
     def load_state_dict(self, state_dict):
         self.optimizer.load_state_dict(state_dict)
+        self._last_lr_epoch = None
 
 
 class ConstantLROptimizer(OptimizerBase):
@@ -104,6 +109,7 @@ class ConstantLROptimizer(OptimizerBase):
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             lr: float = 1e-3,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_non_negative_float(lr, 'lr')
@@ -111,6 +117,7 @@ class ConstantLROptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             lr=lr,
         )
 
@@ -118,6 +125,9 @@ class ConstantLROptimizer(OptimizerBase):
         def lr_function(_: int):
             return self.lr
         return lr_function
+
+    def update_lr(self, epoch: int):
+        return
 
 
 class WarmupOptimizer(OptimizerBase):
@@ -129,6 +139,7 @@ class WarmupOptimizer(OptimizerBase):
             scale: str = 'exponential',
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_positive_int(warmup_epochs, 'warmup_epochs')
@@ -141,6 +152,7 @@ class WarmupOptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             init_lr=init_lr,
             warmup_epochs=warmup_epochs,
             final_lr=final_lr,
@@ -167,6 +179,7 @@ class WarmupDecayOptimizer(OptimizerBase):
             decay_scale: str = 'exponential',
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_positive_int(warmup_epochs, 'warmup_epochs')
@@ -185,6 +198,7 @@ class WarmupDecayOptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             init_lr=init_lr,
             warmup_epochs=warmup_epochs,
             peak_lr=peak_lr,
@@ -223,6 +237,7 @@ class InverseTimeDecayOptimizer(OptimizerBase):
             min_lr: float = None,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_positive_int(decay_steps, 'decay_steps')
@@ -237,6 +252,7 @@ class InverseTimeDecayOptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             decay_steps=decay_steps,
             decay_rate=decay_rate,
@@ -262,6 +278,7 @@ class ExponentialDecayOptimizer(OptimizerBase):
             min_lr: float = None,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_positive_int(decay_steps, 'decay_steps')
@@ -277,6 +294,7 @@ class ExponentialDecayOptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             gamma=gamma,
             decay_steps=decay_steps,
@@ -303,6 +321,7 @@ class StepDecayOptimizer(OptimizerBase):
             min_lr: float = None,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_positive_int(step_size, 'step_size')
@@ -317,6 +336,7 @@ class StepDecayOptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             step_size=step_size,
             gamma=gamma,
@@ -340,6 +360,7 @@ class CosineAnnealingOptimizer(OptimizerBase):
             min_lr: float = 0.0,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_positive_int(total_epochs, 'total_epochs')
@@ -351,6 +372,7 @@ class CosineAnnealingOptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             total_epochs=total_epochs,
             min_lr=min_lr,
@@ -372,6 +394,7 @@ class PolynomialDecayOptimizer(OptimizerBase):
             power: float = 1.0,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
         _validate_positive_int(total_epochs, 'total_epochs')
@@ -386,6 +409,7 @@ class PolynomialDecayOptimizer(OptimizerBase):
         super().__init__(
             algorithm=algorithm,
             optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             total_epochs=total_epochs,
             final_lr=final_lr,
@@ -397,77 +421,3 @@ class PolynomialDecayOptimizer(OptimizerBase):
             progress = min(max(epoch / self.total_epochs, 0.0), 1.0)
             return (self.initial_lr - self.final_lr) * (1 - progress) ** self.power + self.final_lr
         return lr_function
-
-
-AbstractOptimizer = OptimizerBase
-Optimizer = ConstantLROptimizer
-
-
-class OptimizerWithWarmup(WarmupOptimizer):
-    def __init__(
-            self,
-            init_lr: float,
-            init_epoch: int,
-            final_lr: float = 1e-3,
-            log_scale: bool = True,
-            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
-            optimizer_params: dict[str, object] = None,
-            **optimizer_kwargs
-    ):
-        super().__init__(
-            init_lr=init_lr,
-            warmup_epochs=init_epoch,
-            final_lr=final_lr,
-            scale='exponential' if log_scale else 'linear',
-            algorithm=algorithm,
-            optimizer_params=optimizer_params,
-            **optimizer_kwargs
-        )
-
-
-class OptimizerWithWarmupAndDecay(WarmupDecayOptimizer):
-    def __init__(
-            self,
-            init_lr: float,
-            mid_epoch: int,
-            mid_lr: float,
-            final_epoch: int,
-            final_lr: float,
-            log_scale: bool = True,
-            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
-            optimizer_params: dict[str, object] = None,
-            **optimizer_kwargs
-    ):
-        super().__init__(
-            init_lr=init_lr,
-            warmup_epochs=mid_epoch,
-            peak_lr=mid_lr,
-            total_epochs=final_epoch,
-            final_lr=final_lr,
-            warmup_scale='exponential' if log_scale else 'linear',
-            decay_scale='exponential' if log_scale else 'linear',
-            algorithm=algorithm,
-            optimizer_params=optimizer_params,
-            **optimizer_kwargs
-        )
-
-
-class OptimizerWithInverseDecay(InverseTimeDecayOptimizer):
-    def __init__(
-            self,
-            init_lr: float,
-            half_epoch: int,
-            final_lr: float = None,
-            algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
-            optimizer_params: dict[str, object] = None,
-            **optimizer_kwargs
-    ):
-        super().__init__(
-            initial_lr=init_lr,
-            decay_steps=half_epoch,
-            decay_rate=1.0,
-            min_lr=final_lr,
-            algorithm=algorithm,
-            optimizer_params=optimizer_params,
-            **optimizer_kwargs
-        )

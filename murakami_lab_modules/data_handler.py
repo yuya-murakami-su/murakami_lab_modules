@@ -6,9 +6,14 @@ import torch
 import pandas as pd
 import numpy as np
 from . import utils
+from . import dataset as _dataset
 from .normalizer import AbstractNormalizer, StandardNormalizer
 
 IndexLike = torch.Tensor | np.ndarray
+
+__all__ = [
+    'DataHandler',
+]
 
 
 class DataHandler:
@@ -32,6 +37,8 @@ class DataHandler:
             use_train_as_valid: bool = False,
             random_seed: int = 2025,
             csv_encoding: str = None,
+            dataloader_type: str = 'native',
+            dataloader_kwargs: dict[str, object] = None,
             **kwargs
     ):
         self.locals = utils.get_local_dict(locals())
@@ -54,6 +61,8 @@ class DataHandler:
         self.use_train_as_valid = use_train_as_valid
         self.random_seed = random_seed
         self.csv_encoding = csv_encoding
+        self.dataloader_type = dataloader_type
+        self.dataloader_kwargs = dict(dataloader_kwargs or {})
         self.kwargs = kwargs
 
         if label_data_path is None:
@@ -66,6 +75,65 @@ class DataHandler:
             self.output_data_path = output_data_path
 
         self._load_datafiles()
+        self._setup_datasets(split_type=split_type)
+
+    @classmethod
+    def from_tensors(
+            cls,
+            inputs,
+            outputs,
+            labels=None,
+            batch_size: int = None,
+            device_name: str = 'cpu',
+            input_normalizer: AbstractNormalizer = None,
+            output_normalizer: AbstractNormalizer = None,
+            split_type: str = 'random_split',
+            is_validation_data_batched: bool = False,
+            use_train_as_valid: bool = False,
+            random_seed: int = 2025,
+            dataloader_type: str = 'native',
+            dataloader_kwargs: dict[str, object] = None,
+            **kwargs
+    ) -> 'DataHandler':
+        obj = cls.__new__(cls)
+        local_vars = {key: value for key, value in locals().items() if key != 'cls'}
+        obj.locals = utils.get_local_dict(local_vars)
+        obj.device = utils.get_device(device_name)
+        utils.initialize_random_seed(random_seed)
+
+        obj.input_data_path = None
+        obj.output_data_path = None
+        obj.label_data_path = None
+        obj.input_idx = None
+        obj.output_idx = None
+        obj.label_idx = None
+        obj.input_key = None
+        obj.output_key = None
+        obj.label_key = None
+        obj.batch_size = batch_size
+        obj.device_name = device_name
+        obj.input_normalizer = input_normalizer or StandardNormalizer()
+        obj.output_normalizer = output_normalizer or StandardNormalizer()
+        obj.split_type = split_type
+        obj.is_validation_data_batched = is_validation_data_batched
+        obj.use_train_as_valid = use_train_as_valid
+        obj.random_seed = random_seed
+        obj.csv_encoding = None
+        obj.dataloader_type = dataloader_type
+        obj.dataloader_kwargs = dict(dataloader_kwargs or {})
+        obj.kwargs = kwargs
+
+        obj.inputs = cls._to_feature_tensor(inputs)
+        obj.outputs = cls._to_feature_tensor(outputs)
+        if labels is None:
+            obj.labels = np.arange(obj.inputs.shape[0]).reshape(-1, 1)
+        else:
+            obj.labels = cls._to_label_array(labels)
+        obj._validate_data_lengths()
+        obj._setup_datasets(split_type=split_type)
+        return obj
+
+    def _setup_datasets(self, split_type: str) -> None:
         self._send_to_device()
         self._get_default_dataset()
         getattr(self, f'_{split_type}')(**self.kwargs)
@@ -93,6 +161,8 @@ class DataHandler:
             'use_train_as_valid': self.use_train_as_valid,
             'random_seed': self.random_seed,
             'csv_encoding': self.csv_encoding,
+            'dataloader_type': self.dataloader_type,
+            'dataloader_kwargs': self.dataloader_kwargs,
             **self.kwargs
         })
 
@@ -129,6 +199,8 @@ class DataHandler:
                 'device_name': self.device_name,
                 'batch_size': self.batch_size,
                 'random_seed': self.random_seed,
+                'dataloader_type': self.dataloader_type,
+                'dataloader_kwargs': self._json_safe(self.dataloader_kwargs),
             },
             'normalizers': {
                 'input': self._normalizer_summary(self.input_normalizer),
@@ -408,14 +480,14 @@ class DataHandler:
         self.normed_inputs = self.input_normalizer.transform(self.dataset.inputs)
         self.normed_outputs = self.output_normalizer.transform(self.dataset.outputs)
 
-        self.dataset = Dataset(self.normed_inputs, self.normed_outputs, self.dataset.labels)
-        self.train = Dataset(normed_train_inputs, normed_train_outputs, self.train.labels)
-        self.valid = Dataset(
+        self.dataset = _dataset.Dataset(self.normed_inputs, self.normed_outputs, self.dataset.labels)
+        self.train = _dataset.Dataset(normed_train_inputs, normed_train_outputs, self.train.labels)
+        self.valid = _dataset.Dataset(
             self.input_normalizer.transform(self.valid.inputs),
             self.output_normalizer.transform(self.valid.outputs),
             self.valid.labels
         )
-        self.test = Dataset(
+        self.test = _dataset.Dataset(
             self.input_normalizer.transform(self.test.inputs),
             self.output_normalizer.transform(self.test.outputs),
             self.test.labels
@@ -423,9 +495,9 @@ class DataHandler:
         self.datasets = {'all': self.dataset}
 
     def _get_default_dataset(self):
-        self.dataset = Dataset(self.inputs, self.outputs, self.labels)
+        self.dataset = _dataset.Dataset(self.inputs, self.outputs, self.labels)
         self.n_data: dict[str, int] = {'all': self.dataset.n_data}
-        self.datasets: dict[str, Dataset] = {'all': self.dataset}
+        self.datasets: dict[str, _dataset.Dataset] = {'all': self.dataset}
 
     def _random_split(self, split_ratio: tuple[float, ...] = None, **_: object):
         if split_ratio is None:
@@ -450,11 +522,11 @@ class DataHandler:
         if valid_indices is not None:
             self.valid = self.dataset.index_split(valid_indices)
         else:
-            self.valid = Dataset.empty_dataset()
+            self.valid = _dataset.Dataset.empty_dataset()
         if test_indices is not None:
             self.test = self.dataset.index_split(test_indices)
         else:
-            self.test = Dataset.empty_dataset()
+            self.test = _dataset.Dataset.empty_dataset()
 
     def _update_datasets(self):
         self.n_data = self.n_data | {'train': self.train.n_data, 'valid': self.valid.n_data, 'test': self.test.n_data}
@@ -465,17 +537,17 @@ class DataHandler:
     def _get_data_loader(self):
         if self.is_validation_data_batched:
             self.data_loader = {
-                'all': DataLoader(self.datasets['all'], batch_size=self.batch_size, shuffle=False),
-                'train': DataLoader(self.datasets['train'], batch_size=self.batch_size, shuffle=True),
-                'valid': DataLoader(self.datasets['valid'], batch_size=self.batch_size, shuffle=False),
-                'test': DataLoader(self.datasets['test'], batch_size=self.batch_size, shuffle=False)
+                'all': self._make_data_loader('all', batch_size=self.batch_size, shuffle=False),
+                'train': self._make_data_loader('train', batch_size=self.batch_size, shuffle=True),
+                'valid': self._make_data_loader('valid', batch_size=self.batch_size, shuffle=False),
+                'test': self._make_data_loader('test', batch_size=self.batch_size, shuffle=False)
             }
         else:
             self.data_loader = {
-                'all': DataLoader(self.datasets['all'], shuffle=False),
-                'train': DataLoader(self.datasets['train'], batch_size=self.batch_size, shuffle=True),
-                'valid': DataLoader(self.datasets['valid'], shuffle=False),
-                'test': DataLoader(self.datasets['test'], shuffle=False)
+                'all': self._make_data_loader('all', shuffle=False),
+                'train': self._make_data_loader('train', batch_size=self.batch_size, shuffle=True),
+                'valid': self._make_data_loader('valid', shuffle=False),
+                'test': self._make_data_loader('test', shuffle=False)
             }
         if self.use_train_as_valid:
             if self.is_validation_data_batched:
@@ -483,8 +555,17 @@ class DataHandler:
                               'Please consider to prepare valid dataset.')
             if self.n_data['valid'] > 0:
                 raise ValueError('use_train_as_valid was set to True, while valid dataset is not empty.')
-            self.data_loader['train_valid'] = DataLoader(self.datasets['train'], shuffle=False)
+            self.data_loader['train_valid'] = self._make_data_loader('train', shuffle=False)
         self.n_batch = {key: self.data_loader[key].n_batch for key in self.data_loader.keys()}
+
+    def _make_data_loader(self, dataset_name: str, batch_size: int = None, shuffle: bool = False):
+        return _dataset.create_data_loader(
+            dataset=self.datasets[dataset_name],
+            batch_size=batch_size,
+            shuffle=shuffle,
+            dataloader_type=self.dataloader_type,
+            **self.dataloader_kwargs
+        )
 
     def normalize_x(self, x: torch.Tensor):
         return self.input_normalizer.transform(x)
@@ -508,165 +589,3 @@ class DataHandler:
         for x, y, label in self.data_loader[dataset_name]():
             yield x, y, label
 
-
-class Dataset:
-    def __init__(
-            self,
-            inputs: torch.Tensor | list,
-            outputs: torch.Tensor | list,
-            labels
-    ):
-        self.inputs = inputs
-        self.outputs = outputs
-        self.labels = labels
-        if type(inputs) is torch.Tensor:
-            self.n_data = inputs.shape[0]
-        else:
-            self.n_data = len(inputs)
-
-    @staticmethod
-    def _get_tensor_indices(indices: IndexLike | list[int] | tuple[int, ...], device: torch.device) -> torch.Tensor:
-        if torch.is_tensor(indices):
-            return indices.to(device=device)
-        return torch.as_tensor(indices, device=device)
-
-    def _get_permutation(self):
-        if type(self.inputs) is torch.Tensor:
-            return torch.randperm(self.n_data, device=self.inputs.device)
-        return torch.randperm(self.n_data).tolist()
-
-    @staticmethod
-    def _indices_for_metadata(indices):
-        if torch.is_tensor(indices):
-            return indices.detach().cpu().numpy()
-        return indices
-
-    @staticmethod
-    def _select_metadata(metadata, indices):
-        indices = Dataset._indices_for_metadata(indices)
-        if isinstance(metadata, np.ndarray):
-            return metadata[indices]
-        if torch.is_tensor(metadata):
-            return metadata[indices]
-        if isinstance(indices, slice):
-            return metadata[indices]
-        if isinstance(indices, np.ndarray):
-            indices = indices.tolist()
-        if len(indices) > 0 and type(indices[0]) is bool:
-            assert len(indices) == len(metadata)
-            indices = [idx for idx, use in enumerate(indices) if use]
-        return [metadata[idx] for idx in indices]
-
-    def _select(self, indices) -> 'Dataset':
-        if type(self.inputs) is torch.Tensor:
-            if isinstance(indices, slice):
-                return Dataset(self.inputs[indices], self.outputs[indices], self._select_metadata(self.labels, indices))
-            tensor_indices = self._get_tensor_indices(indices, self.inputs.device)
-            return Dataset(
-                self.inputs[tensor_indices],
-                self.outputs[tensor_indices],
-                self._select_metadata(self.labels, tensor_indices)
-            )
-
-        elif type(self.inputs) is list:
-            if isinstance(indices, slice):
-                indices = range(*indices.indices(self.n_data))
-            elif torch.is_tensor(indices):
-                indices = indices.detach().cpu().tolist()
-            elif isinstance(indices, np.ndarray):
-                indices = indices.tolist()
-
-            if len(indices) > 0 and type(indices[0]) is bool:
-                assert len(indices) == self.n_data
-                indices = [idx for idx, use in enumerate(indices) if use]
-
-            return Dataset(
-                [self.inputs[idx] for idx in indices],
-                [self.outputs[idx] for idx in indices],
-                self._select_metadata(self.labels, indices)
-            )
-
-        else:
-            raise ValueError(f'self.inputs must be either of torch.Tensor or list: {type(self.inputs)} was given.')
-
-    def random_split(self, split_ratio: tuple[float, ...]):
-        if len(split_ratio) == 1:
-            if split_ratio[0] > 0.999:
-                n_train = int(self.n_data * split_ratio[0])
-                n_valid, n_test = 0, 0
-            else:
-                n_train = int(self.n_data * split_ratio[0])
-                n_valid = self.n_data - n_train
-                n_test = 0
-        elif len(split_ratio) == 2:
-            if split_ratio[0] + split_ratio[1] > 0.999:
-                n_train = int(self.n_data * split_ratio[0])
-                n_valid = self.n_data - n_train
-                n_test = 0
-            else:
-                n_train = int(self.n_data * split_ratio[0])
-                n_valid = int(self.n_data * split_ratio[1])
-                n_test = self.n_data - n_train - n_valid
-        else:
-            n_train = int(self.n_data * split_ratio[0])
-            n_valid = int(self.n_data * split_ratio[1])
-            n_test = self.n_data - n_train - n_valid
-
-        shuffled = self._select(self._get_permutation())
-
-        train = shuffled._select(slice(None, n_train))
-        if n_valid > 0:
-            idx = slice(n_train, n_train + n_valid)
-            valid = shuffled._select(idx)
-        else:
-            valid = self.empty_dataset()
-        if n_test > 0:
-            idx = slice(n_train + n_valid, None)
-            test = shuffled._select(idx)
-        else:
-            test = self.empty_dataset()
-        return train, valid, test
-
-    def index_split(self, indices: IndexLike):
-        return self._select(indices)
-
-    def __call__(self, shuffle: bool = False):
-        if shuffle:
-            return self._select(self._get_permutation())()
-        else:
-            return self.inputs, self.outputs, self.labels
-
-    def iter_batches(self, batch_size: int, shuffle: bool = False):
-        if self.n_data == 0:
-            return
-
-        indices = self._get_permutation() if shuffle else None
-        n_batch = (self.n_data + batch_size - 1) // batch_size
-        for i in range(n_batch):
-            idx = slice(i * batch_size, (i + 1) * batch_size)
-            if indices is None:
-                yield self.inputs[idx], self.outputs[idx], self._select_metadata(self.labels, idx)
-            else:
-                yield self._select(indices[idx])()
-
-    @staticmethod
-    def empty_dataset() -> 'Dataset':
-        return Dataset(torch.empty([0]), torch.empty([0]), np.empty([0, 1], dtype=object))
-
-
-class DataLoader:
-    def __init__(self, dataset: Dataset, batch_size: int = None, shuffle: bool = False):
-        self.dataset = dataset
-        self.shuffle = shuffle
-        self.n_data = dataset.n_data
-        if batch_size is None:
-            self.batch_size = self.n_data
-        else:
-            self.batch_size = batch_size
-        if self.n_data > 0:
-            self.n_batch = (self.n_data + self.batch_size - 1) // self.batch_size
-        else:
-            self.n_batch = 0
-
-    def __call__(self):
-        yield from self.dataset.iter_batches(batch_size=self.batch_size, shuffle=self.shuffle)

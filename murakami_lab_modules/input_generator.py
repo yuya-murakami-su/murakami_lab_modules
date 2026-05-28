@@ -46,7 +46,7 @@ class InputGenerator:
 
         self._validate_common_settings()
         self._cached_inputs = None
-        self._random_generator = torch.Generator(device='cpu')
+        self._random_generator = torch.Generator(device=self.device)
         self._random_generator.manual_seed(random_seed)
 
         if self.sampling == 'fixed':
@@ -153,7 +153,7 @@ class InputGenerator:
                 [n_samples, self.n_input],
                 dtype=torch.float32,
                 generator=self._random_generator,
-                device='cpu'
+                device=self.device
             )
         elif self.sampling == 'sobol':
             unit = self._sobol_engine.draw(n_samples).to(dtype=torch.float32)

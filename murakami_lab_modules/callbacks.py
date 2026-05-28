@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+import time
 
 import numpy as np
 import pandas as pd
@@ -7,11 +8,21 @@ import torch
 
 __all__ = [
     'Callback',
+    'CSVLogger',
+    'CheckpointBest',
+    'EarlyStopping',
+    'GradientNormMonitor',
+    'HistoryLogger',
+    'LambdaCallback',
+    'LearningRateLogger',
     'LossMonitor',
+    'MaxTime',
     'SaveLossMonitor',
     'SaveParityPlot',
     'SavePredictionResults',
     'StateDictsSaver',
+    'TargetLossReached',
+    'TerminateOnNaN',
     'mse_error',
     'relative_error',
 ]
@@ -64,6 +75,43 @@ def _current_epoch_number(model_handler) -> int:
     return model_handler.epoch + 1
 
 
+def _ensure_evolution_column(model_handler, column: str) -> None:
+    if column not in model_handler.evolution_col:
+        model_handler.evolution_col.append(column)
+
+
+def _latest_evolution_record(model_handler, callback_name: str) -> dict[str, object]:
+    current_evolution = getattr(model_handler, 'current_evolution', None)
+    if current_evolution is not None:
+        return current_evolution
+    if not model_handler.evolution:
+        raise RuntimeError(f'{callback_name} requires at least one evolution record.')
+    return model_handler.evolution[-1]
+
+
+def _record_value(model_handler, monitor: str, callback_name: str) -> float:
+    record = _latest_evolution_record(model_handler, callback_name)
+    if monitor not in record:
+        keys = ', '.join(record.keys())
+        raise KeyError(f'{monitor} was not found in evolution record. Available keys: {keys}')
+    return float(record[monitor])
+
+
+def _is_improved(value: float, best_value: float | None, mode: str, min_delta: float) -> bool:
+    if best_value is None:
+        return True
+    if mode == 'min':
+        return value < best_value - min_delta
+    return value > best_value + min_delta
+
+
+def _state_dicts(model_handler, save_optimizer: bool) -> dict[str, object]:
+    state_dicts = {'nn_state_dict': model_handler.nn.state_dict()}
+    if save_optimizer:
+        state_dicts['optimizer_state_dict'] = model_handler.optimizer.state_dict()
+    return state_dicts
+
+
 def _predict(model_handler, x: torch.Tensor, label=None, phase: str = None) -> torch.Tensor:
     if model_handler.data_fitting is not None:
         return model_handler.data_fitting.predict(
@@ -111,6 +159,320 @@ class Callback:
 
     def on_train_end(self, model_handler):
         pass
+
+
+class EarlyStopping(Callback):
+    def __init__(
+            self,
+            monitor: str = 'valid',
+            patience: int = 100,
+            mode: str = 'min',
+            min_delta: float = 0.0,
+            every: int = 1,
+    ):
+        super().__init__(every=every, run_on_train_end=False)
+        if type(patience) is not int or patience < 0:
+            raise ValueError('patience must be a non-negative int.')
+        if mode not in {'min', 'max'}:
+            raise ValueError("mode must be 'min' or 'max'.")
+        if min_delta < 0:
+            raise ValueError('min_delta must be non-negative.')
+        self.monitor = monitor
+        self.patience = patience
+        self.mode = mode
+        self.min_delta = min_delta
+        self.best_value = None
+        self.best_epoch = None
+        self.wait = 0
+
+    def _is_improved(self, value: float) -> bool:
+        return _is_improved(value, self.best_value, self.mode, self.min_delta)
+
+    def _current_value(self, model_handler) -> float:
+        return _record_value(model_handler, self.monitor, self.__class__.__name__)
+
+    def on_call(self, model_handler):
+        value = self._current_value(model_handler)
+        if self._is_improved(value):
+            self.best_value = value
+            self.best_epoch = model_handler.epoch
+            self.wait = 0
+            return
+
+        self.wait += 1
+        if self.wait >= self.patience:
+            model_handler.request_stop(
+                f'EarlyStopping(monitor={self.monitor}, patience={self.patience}, best_epoch={self.best_epoch + 1})'
+            )
+
+
+class TerminateOnNaN(Callback):
+    def __init__(
+            self,
+            monitors: str | tuple[str, ...] | list[str] = None,
+            every: int = 1
+    ):
+        super().__init__(every=every, run_on_train_end=False)
+        if isinstance(monitors, str):
+            monitors = (monitors,)
+        self.monitors = None if monitors is None else tuple(monitors)
+
+    def on_call(self, model_handler):
+        record = _latest_evolution_record(model_handler, self.__class__.__name__)
+        monitors = self.monitors or tuple(key for key in record if key != 'epoch')
+        for monitor in monitors:
+            if monitor not in record:
+                keys = ', '.join(record.keys())
+                raise KeyError(f'{monitor} was not found in evolution record. Available keys: {keys}')
+            value = float(record[monitor])
+            if not np.isfinite(value):
+                model_handler.request_stop(f'TerminateOnNaN(monitor={monitor}, value={value})')
+                return
+
+
+class MaxTime(Callback):
+    def __init__(
+            self,
+            seconds: float,
+            every: int = 1
+    ):
+        super().__init__(every=every, run_on_train_end=False)
+        if seconds < 0:
+            raise ValueError('seconds must be non-negative.')
+        self.seconds = float(seconds)
+        self.start_time = None
+
+    def on_train_begin(self, model_handler):
+        self.start_time = time.perf_counter()
+
+    def on_call(self, model_handler):
+        if time.perf_counter() - self.start_time >= self.seconds:
+            model_handler.request_stop(f'MaxTime(seconds={self.seconds:g})')
+
+
+class TargetLossReached(Callback):
+    def __init__(
+            self,
+            target: float,
+            monitor: str = 'valid',
+            mode: str = 'below',
+            every: int = 1
+    ):
+        super().__init__(every=every, run_on_train_end=False)
+        if mode not in {'below', 'above'}:
+            raise ValueError("mode must be 'below' or 'above'.")
+        self.target = float(target)
+        self.monitor = monitor
+        self.mode = mode
+
+    def on_call(self, model_handler):
+        value = _record_value(model_handler, self.monitor, self.__class__.__name__)
+        if self.mode == 'below':
+            reached = value <= self.target
+        else:
+            reached = value >= self.target
+        if reached:
+            model_handler.request_stop(
+                f'TargetLossReached(monitor={self.monitor}, target={self.target:g}, value={value:g})'
+            )
+
+
+class LearningRateLogger(Callback):
+    def __init__(
+            self,
+            column: str = 'lr',
+            every: int = 1
+    ):
+        super().__init__(every=every, run_on_train_end=False)
+        self.column = column
+
+    def on_train_begin(self, model_handler):
+        _ensure_evolution_column(model_handler, self.column)
+
+    def on_call(self, model_handler):
+        record = _latest_evolution_record(model_handler, self.__class__.__name__)
+        record[self.column] = model_handler.optimizer.current_lr()
+
+
+class GradientNormMonitor(Callback):
+    def __init__(
+            self,
+            column: str = 'grad_norm',
+            norm_type: float = 2.0,
+            every: int = 1
+    ):
+        super().__init__(every=every, run_on_train_end=False)
+        self.column = column
+        self.norm_type = norm_type
+
+    def on_train_begin(self, model_handler):
+        _ensure_evolution_column(model_handler, self.column)
+
+    def on_call(self, model_handler):
+        record = _latest_evolution_record(model_handler, self.__class__.__name__)
+        grads = [p.grad.detach() for p in model_handler.nn.parameters() if p.grad is not None]
+        if not grads:
+            record[self.column] = 0.0
+            return
+        if self.norm_type == float('inf'):
+            value = max(float(g.abs().max().cpu().item()) for g in grads)
+        else:
+            norms = torch.stack([torch.linalg.vector_norm(g, ord=self.norm_type) for g in grads])
+            value = float(torch.linalg.vector_norm(norms, ord=self.norm_type).cpu().item())
+        record[self.column] = value
+
+
+class HistoryLogger(Callback):
+    def __init__(
+            self,
+            path: str | Path = None,
+            every: int = None,
+            index: bool = False,
+            row_every: int = 1,
+            keep_best: bool = True,
+            keep_last: bool = True,
+    ):
+        super().__init__(every=every, run_on_train_end=True)
+        if row_every is not None and (type(row_every) is not int or row_every <= 0):
+            raise ValueError('row_every must be a positive int or None.')
+        self.path = None if path is None else Path(path)
+        self.index = index
+        self.row_every = row_every
+        self.keep_best = keep_best
+        self.keep_last = keep_last
+
+    def on_train_begin(self, model_handler):
+        if self.path is None:
+            model_path = _require_saved_results(model_handler, self.__class__.__name__)
+            self.path = model_path / 'evolution.csv'
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _should_save_record(self, model_handler, record: dict[str, object]) -> bool:
+        epoch = record.get('epoch')
+        if epoch is None:
+            return True
+        if self.row_every is not None and epoch % self.row_every == 0:
+            return True
+        if self.keep_best and epoch == getattr(model_handler, 'best_epoch', None):
+            return True
+        current = getattr(model_handler, 'current_evolution', None)
+        if self.keep_last and current is not None and epoch == current.get('epoch'):
+            return True
+        return False
+
+    def _selected_records(self, model_handler) -> list[dict[str, object]]:
+        records_by_epoch = {}
+        for record in model_handler.evolution:
+            epoch = record.get('epoch')
+            records_by_epoch[epoch] = record
+
+        current = getattr(model_handler, 'current_evolution', None)
+        if current is not None and self.keep_last:
+            records_by_epoch[current.get('epoch')] = current
+
+        records = sorted(
+            records_by_epoch.values(),
+            key=lambda record: -1 if record.get('epoch') is None else record.get('epoch')
+        )
+        return [
+            record
+            for record in records
+            if self._should_save_record(model_handler, record)
+        ]
+
+    def _save(self, model_handler):
+        pd.DataFrame(self._selected_records(model_handler), columns=model_handler.evolution_col).to_csv(
+            self.path,
+            index=self.index
+        )
+
+    def on_call(self, model_handler):
+        self._save(model_handler)
+
+    def on_train_end(self, model_handler):
+        if self.run_on_train_end:
+            self._save(model_handler)
+
+
+class CSVLogger(HistoryLogger):
+    pass
+
+
+class CheckpointBest(Callback):
+    def __init__(
+            self,
+            monitor: str = 'valid',
+            mode: str = 'min',
+            min_delta: float = 0.0,
+            path: str | Path = None,
+            save_optimizer: bool = True,
+            every: int = 1
+    ):
+        super().__init__(every=every, run_on_train_end=False)
+        if mode not in {'min', 'max'}:
+            raise ValueError("mode must be 'min' or 'max'.")
+        if min_delta < 0:
+            raise ValueError('min_delta must be non-negative.')
+        self.monitor = monitor
+        self.mode = mode
+        self.min_delta = min_delta
+        self.path = None if path is None else Path(path)
+        self.save_optimizer = save_optimizer
+        self.best_value = None
+        self.best_epoch = None
+
+    def on_train_begin(self, model_handler):
+        if self.path is None:
+            model_path = _require_saved_results(model_handler, self.__class__.__name__)
+            self.path = model_path / 'best_state_dicts.pth'
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def on_call(self, model_handler):
+        value = _record_value(model_handler, self.monitor, self.__class__.__name__)
+        if not _is_improved(value, self.best_value, self.mode, self.min_delta):
+            return
+        self.best_value = value
+        self.best_epoch = model_handler.epoch
+        torch.save(_state_dicts(model_handler, self.save_optimizer), self.path)
+
+
+class LambdaCallback(Callback):
+    def __init__(
+            self,
+            on_train_begin: Callable[[object], None] = None,
+            on_epoch_begin: Callable[[object], None] = None,
+            on_call: Callable[[object], None] = None,
+            on_epoch_end: Callable[[object], None] = None,
+            on_train_end: Callable[[object], None] = None,
+            every: int = None,
+            run_on_train_end: bool = True,
+    ):
+        super().__init__(every=every, run_on_train_end=run_on_train_end)
+        self._on_train_begin = on_train_begin
+        self._on_epoch_begin = on_epoch_begin
+        self._on_call = on_call
+        self._on_epoch_end = on_epoch_end
+        self._on_train_end = on_train_end
+
+    def on_train_begin(self, model_handler):
+        if self._on_train_begin is not None:
+            self._on_train_begin(model_handler)
+
+    def on_epoch_begin(self, model_handler):
+        if self._on_epoch_begin is not None:
+            self._on_epoch_begin(model_handler)
+
+    def on_call(self, model_handler):
+        if self._on_call is not None:
+            self._on_call(model_handler)
+
+    def on_epoch_end(self, model_handler):
+        if self._on_epoch_end is not None:
+            self._on_epoch_end(model_handler)
+
+    def on_train_end(self, model_handler):
+        if self.run_on_train_end and self._on_train_end is not None:
+            self._on_train_end(model_handler)
 
 
 class SaveLossMonitor(Callback):
@@ -425,7 +787,7 @@ class StateDictsSaver(Callback):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def on_call(self, model_handler):
-        state_dicts = {'nn_state_dict': model_handler.nn.state_dict()}
-        if self.save_optimizer:
-            state_dicts['optimizer_state_dict'] = model_handler.optimizer.state_dict()
-        torch.save(state_dicts, self.output_dir / f'{_current_epoch_number(model_handler):0>6}.pth')
+        torch.save(
+            _state_dicts(model_handler, self.save_optimizer),
+            self.output_dir / f'{_current_epoch_number(model_handler):0>6}.pth'
+        )

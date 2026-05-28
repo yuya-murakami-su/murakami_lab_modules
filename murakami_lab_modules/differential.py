@@ -4,7 +4,6 @@ __all__ = [
     'grad',
     'partial',
     'partial2',
-    'second_partial',
     'jacobian',
     'hessian_diag',
     'laplacian',
@@ -164,24 +163,6 @@ def partial2(
         keepdim=keepdim
     )
     return dy_dx, d2y_dx2
-
-
-def second_partial(
-        y: torch.Tensor,
-        x: torch.Tensor,
-        x_idx: int,
-        y_idx: int = None,
-        zero_if_unused: bool = False,
-        keepdim: bool = False
-) -> torch.Tensor:
-    return partial2(
-        y=y,
-        x=x,
-        x_idx=x_idx,
-        y_idx=y_idx,
-        zero_if_unused=zero_if_unused,
-        keepdim=keepdim
-    )[1]
 
 
 def jacobian(

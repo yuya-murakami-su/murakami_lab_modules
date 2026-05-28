@@ -22,7 +22,6 @@ class ModelHandler:
             data_fitting: _DataFitting = None,
             regularization: _Regularization = None,
             train_epochs: int = None,
-            early_stop: int = 0,
             load_model: str = None,
             load_optimizer: bool = False,
             save_path: str = 'Model',
@@ -34,6 +33,11 @@ class ModelHandler:
             save_result: bool = True,
             save_model: bool = True,
             restore_best: bool = None,
+            save_history: bool = True,
+            history_policy: str = 'full',
+            history_every: int = 1,
+            keep_best_history: bool = True,
+            keep_last_history: bool = True,
             verbose: bool = True,
             **kwargs
     ):
@@ -46,7 +50,6 @@ class ModelHandler:
         self.regularization = regularization
 
         self.train_epochs = train_epochs
-        self.early_stop = early_stop
 
         self.load_model = load_model
         self.load_optimizer = load_optimizer
@@ -64,6 +67,11 @@ class ModelHandler:
         self.restore_best = (save_result and save_model) if restore_best is None else bool(restore_best)
         if not self.save_result or not self.save_model:
             self.restore_best = False
+        self.save_history = save_history
+        self.history_policy = history_policy
+        self.history_every = history_every
+        self.keep_best_history = keep_best_history
+        self.keep_last_history = keep_last_history
         self.verbose = verbose
 
         self._validate_inputs()
@@ -72,6 +80,7 @@ class ModelHandler:
             self._save_model_info()
         else:
             self.model_path = None
+        self._prepare_callbacks()
         self._set_model()
         self._prepare_train_record()
         self._prepare_train_valuables()
@@ -79,7 +88,6 @@ class ModelHandler:
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
             'train_epochs': self.train_epochs,
-            'early_stop': self.early_stop,
             'load_model': self.load_model,
             'load_optimizer': self.load_optimizer,
             'save_path': self.save_path,
@@ -91,6 +99,11 @@ class ModelHandler:
             'save_result': self.save_result,
             'save_model': self.save_model,
             'restore_best': self.restore_best,
+            'save_history': self.save_history,
+            'history_policy': self.history_policy,
+            'history_every': self.history_every,
+            'keep_best_history': self.keep_best_history,
+            'keep_last_history': self.keep_last_history,
             'verbose': self.verbose,
             **self.kwargs
         })
@@ -117,8 +130,25 @@ class ModelHandler:
                                  f'data_fitting: {self.data_fitting.data_handler.device}, '
                                  f'regularization: {self.regularization.device}')
 
-        if (self.train_epochs is None or self.train_epochs == 0) and self.early_stop == 0:
-            raise ValueError('At least of of train_epochs and early_stop must be give.')
+        if self.train_epochs is not None and self.train_epochs < 1:
+            raise ValueError('train_epochs must be a positive int or None.')
+        if self.history_policy not in {'full', 'sparse', 'last', 'none'}:
+            raise ValueError("history_policy must be one of 'full', 'sparse', 'last', or 'none'.")
+        if type(self.history_every) is not int or self.history_every <= 0:
+            raise ValueError('history_every must be a positive int.')
+
+    def _prepare_callbacks(self):
+        self.callbacks = list(self.callbacks)
+        if not self.save_result or not self.save_history or self.history_policy == 'none':
+            return
+        from .callbacks import HistoryLogger
+        self.callbacks.append(HistoryLogger(
+            path=self.model_path / 'evolution.csv',
+            every=None,
+            row_every=self.history_every if self.history_policy == 'sparse' else 1,
+            keep_best=self.keep_best_history,
+            keep_last=self.keep_last_history,
+        ))
 
     @staticmethod
     def _get_model_folder_timestamp() -> str:
@@ -199,8 +229,11 @@ class ModelHandler:
     def _prepare_train_valuables(self):
         self.epoch = 0
         self.best_loss = None
-        self.best_updated = 0
+        self.best_epoch = None
+        self.epochs_since_best = 0
         self.state_dicts = None
+        self.stop_training = False
+        self.stop_reason = None
         self.dt_epoch = None
         self.t_init = time.perf_counter()
 
@@ -226,6 +259,7 @@ class ModelHandler:
             )
 
         self.evolution = []
+        self.current_evolution = None
 
     def _run_callbacks(self, method: str):
         for cb in self.callbacks:
@@ -267,6 +301,10 @@ class ModelHandler:
 
         self._post_train_treatments()
         self._run_callbacks('on_train_end')
+
+    def request_stop(self, reason: str = None) -> None:
+        self.stop_training = True
+        self.stop_reason = reason
 
     def _get_loss(self, phase: str):
         if phase == 'train':
@@ -466,11 +504,12 @@ class ModelHandler:
         current_loss = valid['total']
         if self.best_loss is None or self.best_loss > current_loss:
             self.best_loss = current_loss
-            self.best_updated = 0
+            self.best_epoch = self.epoch
+            self.epochs_since_best = 0
             if self.restore_best:
                 self.state_dicts = self._get_state_dicts()
         else:
-            self.best_updated += 1
+            self.epochs_since_best += 1
 
     def _update_evolution(self, train: dict[str, object], valid: dict[str, object]) -> None:
         record = {'epoch': self.epoch}
@@ -493,7 +532,39 @@ class ModelHandler:
             record['reg_total'] = train['total']
             for name in self.regularization.reg_names:
                 record[name] = train['terms'][name]
+        self.current_evolution = record
+        if self._should_keep_evolution_record(record):
+            self._store_evolution_record(record)
+
+    def _should_keep_evolution_record(self, record: dict[str, object]) -> bool:
+        if self.history_policy == 'none':
+            return False
+        if self.history_policy == 'full':
+            return True
+        if self.history_policy == 'last':
+            return True
+        epoch = record['epoch']
+        if epoch % self.history_every == 0:
+            return True
+        if self.keep_best_history and epoch == self.best_epoch:
+            return True
+        return False
+
+    def _store_evolution_record(self, record: dict[str, object]) -> None:
+        if self.history_policy == 'last':
+            self.evolution = [record]
+            return
+        if self.evolution and self.evolution[-1].get('epoch') == record.get('epoch'):
+            self.evolution[-1] = record
+            return
         self.evolution.append(record)
+
+    def _ensure_last_evolution_record(self) -> None:
+        if self.current_evolution is None or not self.keep_last_history:
+            return
+        if self.history_policy == 'none':
+            return
+        self._store_evolution_record(self.current_evolution)
 
     def _display_epoch_results(self):
         if not self.verbose:
@@ -510,7 +581,7 @@ class ModelHandler:
         else:
             dt_str = f'({dt:.1f} s)'
 
-        losses = self.evolution[-1]
+        losses = self.current_evolution
 
         if self.has_data:
             if self.has_reg:
@@ -522,14 +593,14 @@ class ModelHandler:
                       f'Train {losses["train"]:.3e} ({losses["train_data"]:.3e} & {losses["train_reg"]:.3e}), '
                       f'Valid {losses["valid"]:.3e} ({losses["valid_data"]:.3e} & {losses["valid_reg"]:.3e}) | '
                       f'{valid_reg_str} | '
-                      f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
+                      f'Best {self.best_loss:.3e} (no change for {self.epochs_since_best: >4}) | '
                       f'lr {self.optimizer.current_lr():.2e}',
                       end='')
             else:
                 print(f'\r[{utils.get_current_time()}] '
                       f'{self.epoch + 1: >5} {dt_str} | '
                       f'Train {losses["train"]:.3e}, Valid {losses["valid"]:.3e} | '
-                      f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
+                      f'Best {self.best_loss:.3e} (no change for {self.epochs_since_best: >4}) | '
                       f'lr {self.optimizer.current_lr():.2e}',
                       end='')
         else:
@@ -539,7 +610,7 @@ class ModelHandler:
             print(f'\r[{utils.get_current_time()}] '
                   f'{self.epoch + 1: >5} {dt_str} | '
                   f'Reg {losses["reg_total"]:.3e} | {reg_str} | '
-                  f'Best {self.best_loss:.3e} (no change for {self.best_updated: >4}) | '
+                  f'Best {self.best_loss:.3e} (no change for {self.epochs_since_best: >4}) | '
                   f'lr {self.optimizer.current_lr():.2e}',
                   end='')
 
@@ -555,13 +626,16 @@ class ModelHandler:
                 self.train_epochs > 0 and
                 self.train_epochs == self.epoch
         )
-        return (0 < self.early_stop == self.best_updated) or epoch_limit_reached
+        return self.stop_training or epoch_limit_reached
 
     def _post_train_treatments(self):
         if self.verbose:
             print('')
+            if self.stop_reason is not None:
+                print(f'Stopped early: {self.stop_reason}')
         if self.restore_best and self.state_dicts is not None:
             self._load_state_dicts()
+        self._ensure_last_evolution_record()
         self._save_model()
         self._save_train_record()
 
@@ -577,7 +651,6 @@ class ModelHandler:
     def _save_model(self):
         if not self.save_result:
             return
-        pd.DataFrame(self.evolution, columns=self.evolution_col).to_csv(self.model_path / 'evolution.csv')
         if self.has_reg:
             self.regularization.save_weight_report(self.model_path / 'regularization_weight_report.csv')
         if self.save_model:
@@ -598,7 +671,12 @@ class ModelHandler:
         if not self.save_result:
             return
 
-        train_record = [utils.get_current_time(), self.epoch - self.best_updated, self.best_loss, test_loss]
+        train_record = [
+            utils.get_current_time(),
+            None if self.best_epoch is None else self.best_epoch + 1,
+            self.best_loss,
+            test_loss,
+        ]
         df = pd.DataFrame([train_record], columns=self.train_record_columns)
         df.to_csv(self.model_path / 'train_record.csv', index=False)
         self.train_record = pd.concat([self.train_record, df], axis=0)

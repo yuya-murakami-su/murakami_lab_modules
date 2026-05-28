@@ -25,6 +25,15 @@ class OutputMagnitudeRegularization(Regularization):
         return [nn(x=x)]
 
 
+class PositionalOnlyNetwork(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = torch.nn.Linear(1, 1)
+
+    def forward(self, z):
+        return self.linear(z)
+
+
 def _make_data_handler(tmp_path):
     x_path = tmp_path / 'x.csv'
     y_path = tmp_path / 'y.csv'
@@ -92,6 +101,78 @@ def test_model_handler_can_skip_heavy_model_files(tmp_path):
     assert (model_path / 'metadata' / 'data_summary.json').exists()
     assert not (model_path / 'state_dicts.pth').exists()
     assert not (model_path / 'normalizer.pth').exists()
+
+
+def test_model_handler_can_disable_history_file(tmp_path):
+    data_handler = _make_data_handler(tmp_path)
+    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=1,
+        save_path=str(tmp_path / 'Model'),
+        train_record_path=str(tmp_path / 'train_record'),
+        save_history=False,
+    )
+
+    model_handler()
+    model_path = tmp_path / 'Model' / model_handler.model_name
+
+    assert model_path.exists()
+    assert not (model_path / 'evolution.csv').exists()
+
+
+def test_model_handler_can_keep_sparse_history(tmp_path):
+    data_handler = _make_data_handler(tmp_path)
+    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=0.0)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=5,
+        save_path=str(tmp_path / 'Model'),
+        train_record_path=str(tmp_path / 'train_record'),
+        history_policy='sparse',
+        history_every=2,
+        keep_best_history=False,
+        verbose=False,
+    )
+
+    model_handler()
+    model_path = tmp_path / 'Model' / model_handler.model_name
+
+    assert [record['epoch'] for record in model_handler.evolution] == [0, 2, 4]
+    evolution = pd.read_csv(model_path / 'evolution.csv')
+    assert evolution['epoch'].to_list() == [0, 2, 4]
+
+
+def test_model_handler_can_skip_in_memory_history(tmp_path):
+    data_handler = _make_data_handler(tmp_path)
+    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=2,
+        save_path=str(tmp_path / 'Model'),
+        train_record_path=str(tmp_path / 'train_record'),
+        history_policy='none',
+        verbose=False,
+    )
+
+    model_handler()
+    model_path = tmp_path / 'Model' / model_handler.model_name
+
+    assert model_handler.evolution == []
+    assert model_handler.current_evolution['epoch'] == 1
+    assert not (model_path / 'evolution.csv').exists()
 
 
 def test_save_model_false_skips_best_state_snapshot(tmp_path):
@@ -218,6 +299,18 @@ def test_model_handler_with_regularization_saves_weight_report(tmp_path):
     report = pd.read_csv(report_path)
     assert list(report['name']) == ['output_magnitude']
     assert np.allclose(report['weight'].to_numpy(), [0.1])
+
+
+def test_data_fitting_caches_positional_nn_call_style(tmp_path):
+    data_handler = _make_data_handler(tmp_path)
+    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    nn = PositionalOnlyNetwork()
+    x, y, label = next(data_handler('train'))
+
+    data_fitting.compute_loss(nn=nn, x=x, y=y, label=label)
+    data_fitting.compute_loss(nn=nn, x=x, y=y, label=label)
+
+    assert data_fitting._nn_call_styles[id(nn)] == 'positional'
 
 
 def test_nn_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path):

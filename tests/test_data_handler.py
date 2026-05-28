@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from murakami_lab_modules.data_handler import DataHandler, DataLoader, Dataset
+from murakami_lab_modules.data_handler import DataHandler
+from murakami_lab_modules.dataset import DataLoader, Dataset, TorchDataLoader
 from murakami_lab_modules.normalizer import LogStandardNormalizer, StandardNormalizer
 
 
@@ -28,13 +29,13 @@ def test_dataloader_shuffle_selects_only_batch_sized_slices():
     labels = np.arange(6).reshape(-1, 1)
     dataset = Dataset(inputs, outputs, labels)
     selected_sizes = []
-    original_select = dataset._select
+    original_take = dataset._take
 
-    def select_with_count(indices):
+    def take_with_count(indices):
         selected_sizes.append(len(indices))
-        return original_select(indices)
+        return original_take(indices)
 
-    dataset._select = select_with_count
+    dataset._take = take_with_count
     loader = DataLoader(dataset, batch_size=2, shuffle=True)
 
     batches = list(loader())
@@ -94,6 +95,56 @@ def test_data_handler_keeps_string_labels_and_normalizes_with_exclusions(tmp_pat
     summary_csv = pd.read_csv(csv_path)
     assert {'key', 'value'} == set(summary_csv.columns)
     assert 'n_data.train' in set(summary_csv['key'])
+
+
+def test_data_handler_can_use_torch_dataloader_with_string_labels(tmp_path):
+    x_path = tmp_path / 'x.csv'
+    y_path = tmp_path / 'y.csv'
+    label_path = tmp_path / 'label.csv'
+    pd.DataFrame({'x': [0.0, 1.0, 2.0, 3.0]}).to_csv(x_path, index=False)
+    pd.DataFrame({'y': [0.0, 1.0, 4.0, 9.0]}).to_csv(y_path, index=False)
+    pd.DataFrame({'label': ['a', 'b', 'c', 'd']}).to_csv(label_path, index=False)
+
+    data_handler = DataHandler(
+        input_data_path=str(x_path),
+        input_idx=['x'],
+        output_data_path=str(y_path),
+        output_idx=['y'],
+        label_data_path=str(label_path),
+        label_idx=['label'],
+        batch_size=2,
+        split_ratio=(1.0,),
+        use_train_as_valid=True,
+        dataloader_type='torch',
+    )
+
+    x, y, label = next(data_handler('train'))
+
+    assert isinstance(data_handler.data_loader['train'], TorchDataLoader)
+    assert x.shape == (2, 1)
+    assert y.shape == (2, 1)
+    assert label.shape == (2, 1)
+    assert label.dtype.kind in {'U', 'S', 'O'}
+
+
+def test_data_handler_from_tensors_uses_native_loader_by_default():
+    data_handler = DataHandler.from_tensors(
+        inputs=torch.arange(6, dtype=torch.float32).reshape(6, 1),
+        outputs=torch.arange(6, dtype=torch.float32).reshape(6, 1),
+        labels=np.asarray(['a', 'b', 'c', 'd', 'e', 'f']).reshape(-1, 1),
+        batch_size=2,
+        split_type='index_split',
+        train_indices=np.asarray([0, 1, 2, 3]),
+        valid_indices=np.asarray([4]),
+        test_indices=np.asarray([5]),
+    )
+
+    assert isinstance(data_handler.data_loader['train'], DataLoader)
+    assert data_handler.n_data == {'all': 6, 'train': 4, 'valid': 1, 'test': 1}
+    x, y, label = next(data_handler('valid'))
+    assert x.shape == (1, 1)
+    assert y.shape == (1, 1)
+    assert label[0, 0] == 'e'
 
 
 def test_normalizers_roundtrip():

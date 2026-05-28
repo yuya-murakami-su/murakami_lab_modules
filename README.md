@@ -175,9 +175,12 @@ results = cv.run(params={"lr": 1e-3, "batch_size": 32, "n_node": 64})
 Saved model folders contain:
 
 - `config.json` and per-component metadata JSON files
-- `evolution.csv`
+- `evolution.csv` when history saving is enabled
 - lightweight data summaries
 - `state_dicts.pth` and `normalizer.pth` when `save_model=True`
+
+History storage can be reduced for long runs or cross-validation with `history_policy='sparse'`, `'last'`, or `'none'`.
+Use `save_history=False` to skip `evolution.csv`, or add `HistoryLogger`/`CSVLogger` callbacks for custom CSV output.
 
 Configuration files are intended as audit metadata. Reproducible training should be based on your script plus the saved
 state dicts and metadata.

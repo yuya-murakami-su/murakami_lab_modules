@@ -10,7 +10,7 @@ from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.regularization import Regularization
 from murakami_lab_modules.input_generator import InputGenerator
 from murakami_lab_modules.plotter import Plotter
-from murakami_lab_modules.callbacks import LossMonitor
+from murakami_lab_modules.callbacks import EarlyStopping, LossMonitor
 from murakami_lab_modules.predictor import NNPredictor
 
 
@@ -102,8 +102,10 @@ def main():
         data_fitting=data_fitting,
         regularization=regularization,
         train_epochs=10_000,
-        early_stop=300,
-        callbacks=(LossMonitor(need_data=True, need_reg=True, every=10),)
+        callbacks=(
+            EarlyStopping(monitor='valid', patience=300),
+            LossMonitor(need_data=True, need_reg=True, every=10),
+        )
     )
 
     # Start training / 機械学習の実行

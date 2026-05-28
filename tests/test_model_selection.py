@@ -19,6 +19,16 @@ from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
 from murakami_lab_modules.optimizer import ConstantLROptimizer
 
 
+class CountingDataFitting(DataFitting):
+    def __init__(self, *args, counter: list[int], **kwargs):
+        super().__init__(*args, **kwargs)
+        self.counter = counter
+
+    def compute_loss(self, *args, **kwargs):
+        self.counter[0] += 1
+        return super().compute_loss(*args, **kwargs)
+
+
 def _write_linear_data(tmp_path, n_data=8):
     tmp_path.mkdir(parents=True, exist_ok=True)
     x_path = tmp_path / 'x.csv'
@@ -104,6 +114,52 @@ def test_cross_validator_runs_model_factory_for_each_fold(tmp_path):
     assert all(result.params == {'lr': 1e-3} for result in results)
     assert all(result.valid_loss is not None for result in results)
     assert all('valid_mae' in result.metrics for result in results)
+
+
+def test_cross_validator_uses_recorded_valid_loss_without_extra_forward(tmp_path):
+    x_path, y_path = _write_linear_data(tmp_path, n_data=6)
+    counters = []
+
+    def factory(params, split, context):
+        counter = [0]
+        counters.append(counter)
+        data_handler = DataHandler(
+            input_data_path=str(x_path),
+            input_idx=['x'],
+            output_data_path=str(y_path),
+            output_idx=['y'],
+            batch_size=2,
+            split_type='index_split',
+            train_indices=split.train_indices,
+            valid_indices=split.valid_indices,
+            device_name='cpu',
+        )
+        data_fitting = CountingDataFitting(
+            data_handler=data_handler,
+            loss_criteria=torch.nn.MSELoss(),
+            counter=counter,
+        )
+        nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=context.seed)
+        optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+        return ModelHandler(
+            nn=nn,
+            optimizer=optimizer,
+            data_fitting=data_fitting,
+            train_epochs=1,
+            save_result=False,
+            verbose=False,
+        )
+
+    cv = CrossValidator(
+        model_factory=factory,
+        splitter=KFoldSplitter(n_splits=2, shuffle=False),
+        indices=6,
+    )
+
+    results = cv.run()
+
+    assert all(result.valid_loss is not None for result in results)
+    assert [counter[0] for counter in counters] == [3, 3]
 
 
 def test_grid_and_random_search_rank_results(tmp_path):

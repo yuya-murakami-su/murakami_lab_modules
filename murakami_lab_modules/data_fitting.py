@@ -20,6 +20,7 @@ class DataFitting:
         self.data_handler = data_handler
         self.loss_criteria = loss_criteria
         self.check_test = check_test
+        self._nn_call_styles: dict[int, str] = {}
 
         if data_handler.n_data['test'] == 0 and self.check_test:
             utils.logging(f'[Warning] check_test was set to True while no test data available.')
@@ -61,14 +62,23 @@ class DataFitting:
     ) -> torch.Tensor:
         return self._call_nn(nn, x)
 
-    @staticmethod
-    def _call_nn(nn: AbstractNeuralNetwork, x: torch.Tensor) -> torch.Tensor:
-        try:
+    def _call_nn(self, nn: AbstractNeuralNetwork, x: torch.Tensor) -> torch.Tensor:
+        call_key = id(nn)
+        call_style = self._nn_call_styles.get(call_key)
+        if call_style == 'keyword':
             return nn(x=x)
+        if call_style == 'positional':
+            return nn(x)
+
+        try:
+            y = nn(x=x)
         except TypeError as e:
             if "unexpected keyword argument 'x'" not in str(e):
                 raise
+            self._nn_call_styles[call_key] = 'positional'
             return nn(x)
+        self._nn_call_styles[call_key] = 'keyword'
+        return y
 
     @staticmethod
     def _validate_loss(loss: torch.Tensor) -> None:

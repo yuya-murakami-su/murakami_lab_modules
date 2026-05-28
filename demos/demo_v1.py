@@ -8,7 +8,7 @@ from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
 from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.plotter import Plotter
-from murakami_lab_modules.callbacks import LossMonitor
+from murakami_lab_modules.callbacks import EarlyStopping, LossMonitor
 from murakami_lab_modules.predictor import NNPredictor
 
 
@@ -81,8 +81,10 @@ def main():
         optimizer=optimizer,
         data_fitting=data_fitting,
         train_epochs=10_000,
-        early_stop=300,
-        callbacks=(LossMonitor(need_data=True, need_reg=True, every=10),)
+        callbacks=(
+            EarlyStopping(monitor='valid', patience=300),
+            LossMonitor(need_data=True, need_reg=True, every=10),
+        )
     )
 
     # Start training / 機械学習の実行

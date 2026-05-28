@@ -173,7 +173,6 @@ class Regularization:
     grad = staticmethod(differential.grad)
     partial = staticmethod(differential.partial)
     partial2 = staticmethod(differential.partial2)
-    second_partial = staticmethod(differential.second_partial)
     jacobian = staticmethod(differential.jacobian)
     hessian_diag = staticmethod(differential.hessian_diag)
     laplacian = staticmethod(differential.laplacian)

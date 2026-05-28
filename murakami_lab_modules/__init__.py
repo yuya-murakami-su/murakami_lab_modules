@@ -5,6 +5,7 @@ __version__ = '1.1.0'
 __all__ = [
     'callbacks',
     'data_handler',
+    'dataset',
     'data_fitting',
     'differential',
     'input_generator',

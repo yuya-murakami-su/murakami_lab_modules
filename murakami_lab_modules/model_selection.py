@@ -263,6 +263,56 @@ def evaluate_data_loss(model_handler, phase: str) -> float | None:
     return float(np.average(losses, weights=batch_sizes)) if losses else None
 
 
+def _loss_phase_from_key(key: str) -> str | None:
+    if not key.endswith('_loss'):
+        return None
+    phase = key[:-len('_loss')]
+    return phase if phase in {'train', 'valid', 'test'} else None
+
+
+def _record_index(model_handler, prefer_best: bool) -> int | None:
+    evolution = getattr(model_handler, 'evolution', None)
+    if not evolution:
+        return None
+    if not prefer_best:
+        return len(evolution) - 1
+    best_epoch = getattr(model_handler, 'best_epoch', None)
+    if best_epoch is None:
+        return len(evolution) - 1
+    for idx, record in enumerate(evolution):
+        if record.get('epoch') == best_epoch:
+            return idx
+    return None
+
+
+def _recorded_data_loss(model_handler, phase: str, prefer_best: bool = True) -> float | None:
+    if phase == 'test':
+        return None
+    idx = _record_index(model_handler, prefer_best=prefer_best)
+    if idx is None:
+        return None
+
+    record = model_handler.evolution[idx]
+    key = phase
+    if getattr(model_handler, 'has_reg', False) and f'{phase}_data' in record:
+        key = f'{phase}_data'
+    if key not in record:
+        return None
+    return _to_float(record[key])
+
+
+def collect_data_losses(model_handler, phases: Sequence[str]) -> dict[str, float | None]:
+    losses = {'train_loss': None, 'valid_loss': None, 'test_loss': None}
+    for phase in phases:
+        if phase not in {'train', 'valid', 'test'}:
+            raise ValueError(f"loss phase must be one of 'train', 'valid', or 'test'. {phase} was given.")
+        loss = _recorded_data_loss(model_handler, phase=phase)
+        if loss is None:
+            loss = evaluate_data_loss(model_handler, phase)
+        losses[f'{phase}_loss'] = loss
+    return losses
+
+
 def evaluate_metrics(model_handler, metrics: Sequence[Metric], phase: str) -> dict[str, float]:
     if not metrics or not getattr(model_handler, 'has_data', False):
         return {}
@@ -303,18 +353,17 @@ def _result_from_model_handler(
         context: TrialContext,
         elapsed_time: float,
         metrics: Sequence[Metric],
-        metric_phases: Sequence[str]
+        metric_phases: Sequence[str],
+        loss_phases: Sequence[str]
 ) -> TrialResult:
     metric_values = {}
     for phase in metric_phases:
         metric_values.update(evaluate_metrics(model_handler, metrics=metrics, phase=phase))
 
-    train_loss = evaluate_data_loss(model_handler, 'train')
-    valid_loss = evaluate_data_loss(model_handler, 'valid')
-    test_loss = evaluate_data_loss(model_handler, 'test')
-    best_epoch = None
-    if getattr(model_handler, 'epoch', None) is not None and getattr(model_handler, 'best_updated', None) is not None:
-        best_epoch = model_handler.epoch - model_handler.best_updated
+    losses = collect_data_losses(model_handler, phases=loss_phases)
+    best_epoch = getattr(model_handler, 'best_epoch', None)
+    if best_epoch is not None:
+        best_epoch += 1
 
     return TrialResult(
         trial_id=context.trial_id,
@@ -325,9 +374,9 @@ def _result_from_model_handler(
         inner_fold=context.inner_fold,
         seed=context.seed,
         best_loss=_to_float(getattr(model_handler, 'best_loss', None)),
-        train_loss=train_loss,
-        valid_loss=valid_loss,
-        test_loss=test_loss,
+        train_loss=losses['train_loss'],
+        valid_loss=losses['valid_loss'],
+        test_loss=losses['test_loss'],
         metrics=metric_values,
         model_path=getattr(model_handler, 'model_path', None),
         n_epochs=getattr(model_handler, 'epoch', None),
@@ -383,6 +432,7 @@ class CrossValidator:
             indices: int | Sequence[int] | np.ndarray,
             metrics: Sequence[Metric] = (),
             metric_phases: Sequence[str] = ('valid',),
+            loss_phases: Sequence[str] = ('valid',),
             random_seed: int = 2025,
             raise_on_error: bool = True,
     ):
@@ -391,6 +441,7 @@ class CrossValidator:
         self.indices = indices
         self.metrics = tuple(metrics)
         self.metric_phases = tuple(metric_phases)
+        self.loss_phases = tuple(loss_phases)
         self.random_seed = random_seed
         self.raise_on_error = raise_on_error
 
@@ -434,6 +485,7 @@ class CrossValidator:
                 elapsed_time=time.perf_counter() - t0,
                 metrics=self.metrics,
                 metric_phases=self.metric_phases,
+                loss_phases=self.loss_phases,
             )
         except Exception as e:
             if self.raise_on_error:
@@ -452,6 +504,7 @@ class GridSearch:
             greater_is_better: bool = False,
             metrics: Sequence[Metric] = (),
             metric_phases: Sequence[str] = ('valid',),
+            loss_phases: Sequence[str] = None,
             random_seed: int = 2025,
             raise_on_error: bool = True,
     ):
@@ -463,6 +516,10 @@ class GridSearch:
         self.greater_is_better = greater_is_better
         self.metrics = tuple(metrics)
         self.metric_phases = tuple(metric_phases)
+        score_phase = _loss_phase_from_key(score_key)
+        if loss_phases is None:
+            loss_phases = () if score_phase is None else (score_phase,)
+        self.loss_phases = tuple(loss_phases)
         self.random_seed = random_seed
         self.raise_on_error = raise_on_error
         self.cv_results_: list[TrialResult] = []
@@ -492,6 +549,7 @@ class GridSearch:
             indices=self.indices,
             metrics=self.metrics,
             metric_phases=self.metric_phases,
+            loss_phases=self.loss_phases,
             random_seed=self.random_seed,
             raise_on_error=self.raise_on_error,
         )
@@ -538,6 +596,7 @@ class RandomSearch(GridSearch):
             greater_is_better: bool = False,
             metrics: Sequence[Metric] = (),
             metric_phases: Sequence[str] = ('valid',),
+            loss_phases: Sequence[str] = None,
             random_seed: int = 2025,
             raise_on_error: bool = True,
     ):
@@ -550,6 +609,7 @@ class RandomSearch(GridSearch):
             greater_is_better=greater_is_better,
             metrics=metrics,
             metric_phases=metric_phases,
+            loss_phases=loss_phases,
             random_seed=random_seed,
             raise_on_error=raise_on_error,
         )
@@ -576,6 +636,7 @@ class NestedCrossValidator:
             greater_is_better: bool = False,
             metrics: Sequence[Metric] = (),
             metric_phases: Sequence[str] = ('valid', 'test'),
+            loss_phases: Sequence[str] = ('test',),
             random_seed: int = 2025,
             raise_on_error: bool = True,
     ):
@@ -588,6 +649,7 @@ class NestedCrossValidator:
         self.greater_is_better = greater_is_better
         self.metrics = tuple(metrics)
         self.metric_phases = tuple(metric_phases)
+        self.loss_phases = tuple(loss_phases)
         self.random_seed = random_seed
         self.raise_on_error = raise_on_error
         self.inner_search_results_: list[SearchResult] = []
@@ -610,6 +672,7 @@ class NestedCrossValidator:
                 greater_is_better=self.greater_is_better,
                 metrics=self.metrics,
                 metric_phases=('valid',),
+                loss_phases=None,
                 random_seed=self.random_seed + outer_fold * 100_000,
                 raise_on_error=self.raise_on_error,
             )
@@ -655,6 +718,7 @@ class NestedCrossValidator:
                 elapsed_time=time.perf_counter() - t0,
                 metrics=self.metrics,
                 metric_phases=self.metric_phases,
+                loss_phases=self.loss_phases,
             )
         except Exception as e:
             if self.raise_on_error:
