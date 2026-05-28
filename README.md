@@ -44,7 +44,7 @@ For local development:
 ```bash
 git clone https://github.com/yuya-murakami-su/murakami_lab_modules.git
 cd murakami_lab_modules
-pip install -e ".[test,plot]"
+pip install -e ".[dev]"
 python -m pytest
 ```
 

@@ -95,7 +95,13 @@ _OBJECTS = {
     'plot_histogram': 'murakami_lab_modules.visualization',
 }
 
-__all__ = sorted(_SUBMODULES | set(_OBJECTS))
+_OPTIONAL_EXPORTS = {
+    'visualization',
+    'Plotter',
+    'plot_histogram',
+}
+
+__all__ = sorted((_SUBMODULES | set(_OBJECTS)) - _OPTIONAL_EXPORTS)
 
 
 def __getattr__(name: str):

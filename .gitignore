@@ -2,8 +2,12 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .idea/
-/demos/demo_v1/
-/demos/demo_v2/
-/demos/demo_v3/
+/build/
+/dist/
+/*.egg-info/
+/murakami_lab_modules.egg-info/
+/demos/demo_outputs/
+/demos/demo_data/
 /demo_data/
 /demos/logs.log
+/todo.txt
