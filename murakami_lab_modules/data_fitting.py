@@ -4,7 +4,7 @@ import torch
 
 from . import utils
 from .data_handler import DataHandler
-from .neural_network import AbstractNeuralNetwork
+from .neural_network import BaseNeuralNetwork
 
 __all__ = [
     'DataFitting',
@@ -17,21 +17,21 @@ class DataFitting:
     def __init__(
             self,
             data_handler: DataHandler,
-            loss_criteria: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = torch.nn.MSELoss(),
+            loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = torch.nn.MSELoss(),
     ):
         self.locals = utils.get_local_dict(locals())
         self.data_handler = data_handler
-        self.loss_criteria = loss_criteria
+        self.loss_fn = loss_fn
         self._nn_call_styles: dict[int, str] = {}
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
-            'loss_criteria': self.loss_criteria,
+            'loss_fn': self.loss_fn,
         })
 
     def compute_loss(
             self,
-            nn: AbstractNeuralNetwork,
+            nn: BaseNeuralNetwork,
             x: torch.Tensor,
             y: torch.Tensor,
             label=None,
@@ -39,7 +39,7 @@ class DataFitting:
             epoch: int = None
     ) -> dict[str, object]:
         y_pred = self.predict(nn=nn, x=x, label=label, phase=phase, epoch=epoch)
-        loss = self.loss_criteria(y, y_pred)
+        loss = self.loss_fn(y, y_pred)
         self._validate_loss(loss)
         return {
             'total': loss,
@@ -51,7 +51,7 @@ class DataFitting:
 
     def predict(
             self,
-            nn: AbstractNeuralNetwork,
+            nn: BaseNeuralNetwork,
             x: torch.Tensor,
             label=None,
             phase: str = None,
@@ -59,7 +59,7 @@ class DataFitting:
     ) -> torch.Tensor:
         return self._call_nn(nn, x)
 
-    def _call_nn(self, nn: AbstractNeuralNetwork, x: torch.Tensor) -> torch.Tensor:
+    def _call_nn(self, nn: BaseNeuralNetwork, x: torch.Tensor) -> torch.Tensor:
         call_key = id(nn)
         call_style = self._nn_call_styles.get(call_key)
         if call_style == 'keyword':
@@ -80,10 +80,10 @@ class DataFitting:
     @staticmethod
     def _validate_loss(loss: torch.Tensor) -> None:
         if not torch.is_tensor(loss):
-            raise TypeError(f'loss_criteria must return torch.Tensor. {type(loss)} was returned.')
+            raise TypeError(f'loss_fn must return torch.Tensor. {type(loss)} was returned.')
         if loss.numel() != 1:
             raise ValueError(
-                f'loss_criteria must return a scalar tensor. '
+                f'loss_fn must return a scalar tensor. '
                 f'loss.shape={tuple(loss.shape)} was returned.'
             )
 
@@ -92,16 +92,16 @@ class MultiClassClassificationFitting(DataFitting):
     def __init__(
             self,
             data_handler: DataHandler,
-            loss_criteria: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
+            loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
     ):
         super().__init__(
             data_handler=data_handler,
-            loss_criteria=loss_criteria or torch.nn.CrossEntropyLoss()
+            loss_fn=loss_fn or torch.nn.CrossEntropyLoss()
         )
 
     def compute_loss(
             self,
-            nn: AbstractNeuralNetwork,
+            nn: BaseNeuralNetwork,
             x: torch.Tensor,
             y: torch.Tensor,
             label=None,
@@ -110,7 +110,7 @@ class MultiClassClassificationFitting(DataFitting):
     ) -> dict[str, object]:
         logits = self.predict(nn=nn, x=x, label=label, phase=phase, epoch=epoch)
         target = self._prepare_target(y)
-        loss = self.loss_criteria(logits, target)
+        loss = self.loss_fn(logits, target)
         self._validate_loss(loss)
         return {
             'total': loss,
@@ -136,16 +136,16 @@ class BinaryClassificationFitting(DataFitting):
     def __init__(
             self,
             data_handler: DataHandler,
-            loss_criteria: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
+            loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
     ):
         super().__init__(
             data_handler=data_handler,
-            loss_criteria=loss_criteria or torch.nn.BCEWithLogitsLoss()
+            loss_fn=loss_fn or torch.nn.BCEWithLogitsLoss()
         )
 
     def compute_loss(
             self,
-            nn: AbstractNeuralNetwork,
+            nn: BaseNeuralNetwork,
             x: torch.Tensor,
             y: torch.Tensor,
             label=None,
@@ -154,7 +154,7 @@ class BinaryClassificationFitting(DataFitting):
     ) -> dict[str, object]:
         logits = self.predict(nn=nn, x=x, label=label, phase=phase, epoch=epoch)
         target = self._prepare_target(y, logits)
-        loss = self.loss_criteria(logits, target)
+        loss = self.loss_fn(logits, target)
         self._validate_loss(loss)
         return {
             'total': loss,

@@ -6,10 +6,10 @@ from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
 
 def test_feed_forward_neural_network_forward_shape():
     nn = FeedForwardNeuralNetwork(
-        n_input=2,
-        n_output=3,
-        n_layer=1,
-        n_node=4,
+        input_dim=2,
+        output_dim=3,
+        n_hidden_layers=1,
+        hidden_dim=4,
         activation=torch.nn.Tanh(),
         random_seed=1,
     )
@@ -19,10 +19,10 @@ def test_feed_forward_neural_network_forward_shape():
 
 def test_feed_forward_neural_network_config_can_recreate_model():
     nn = FeedForwardNeuralNetwork(
-        n_input=2,
-        n_output=1,
-        n_layer=1,
-        n_node=4,
+        input_dim=2,
+        output_dim=1,
+        n_hidden_layers=1,
+        hidden_dim=4,
         activation=torch.nn.ReLU(),
         random_seed=1,
     )
@@ -36,10 +36,10 @@ def test_feed_forward_neural_network_config_can_recreate_model():
 
 def test_feed_forward_neural_network_can_include_batch_norm_and_dropout():
     nn = FeedForwardNeuralNetwork(
-        n_input=2,
-        n_output=1,
-        n_layer=2,
-        n_node=4,
+        input_dim=2,
+        output_dim=1,
+        n_hidden_layers=2,
+        hidden_dim=4,
         activation=torch.nn.ReLU(),
         dropout=0.2,
         batch_norm=True,
@@ -54,12 +54,12 @@ def test_feed_forward_neural_network_can_include_batch_norm_and_dropout():
     assert nn.dropout == 0.2
 
 
-def test_hidden_activation_modules_are_not_shared_between_layers():
+def test_hidden_activation_modules_are_not_shared_between_hidden_layers():
     nn = FeedForwardNeuralNetwork(
-        n_input=2,
-        n_output=1,
-        n_layer=2,
-        n_node=4,
+        input_dim=2,
+        output_dim=1,
+        n_hidden_layers=2,
+        hidden_dim=4,
         activation=torch.nn.PReLU(),
         random_seed=1,
     )

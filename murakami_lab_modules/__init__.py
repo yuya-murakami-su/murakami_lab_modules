@@ -11,6 +11,7 @@ __all__ = [
     'experiment',
     'input_generator',
     'losses',
+    'metrics',
     'model_handler',
     'model_selection',
     'neural_network',
@@ -18,7 +19,6 @@ __all__ = [
     'optimizer',
     'plotter',
     'predictor',
-    'statistics',
     'utils',
 ]
 

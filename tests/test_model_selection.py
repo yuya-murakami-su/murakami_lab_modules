@@ -16,7 +16,7 @@ from murakami_lab_modules.model_selection import (
     sample_parameter_space,
 )
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import ConstantLROptimizer
+from murakami_lab_modules.optimizer import Optimizer
 
 
 class CountingDataFitting(DataFitting):
@@ -46,9 +46,9 @@ def _make_factory(tmp_path, n_data=8):
     def factory(params, split, context):
         data_handler = DataHandler(
             input_data_path=str(x_path),
-            input_idx=['x'],
+            input_columns=['x'],
             output_data_path=str(y_path),
-            output_idx=['y'],
+            output_columns=['y'],
             batch_size=2,
             split_type='index_split',
             train_indices=split.train_indices,
@@ -57,9 +57,9 @@ def _make_factory(tmp_path, n_data=8):
             use_train_as_valid=split.valid_indices is None,
             device_name='cpu',
         )
-        data_fitting = DataFitting(data_handler=data_handler, loss_criteria=torch.nn.MSELoss())
-        nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=context.seed)
-        optimizer = ConstantLROptimizer(torch.optim.SGD, lr=params.get('lr', 1e-3))
+        data_fitting = DataFitting(data_handler=data_handler, loss_fn=torch.nn.MSELoss())
+        nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=context.seed)
+        optimizer = Optimizer(torch.optim.SGD, lr=params.get('lr', 1e-3))
         return ModelHandler(
             nn=nn,
             optimizer=optimizer,
@@ -112,11 +112,11 @@ def test_cross_validator_runs_model_factory_for_each_fold(tmp_path):
     assert len(results) == 2
     assert all(result.status == 'ok' for result in results)
     assert all(result.params == {'lr': 1e-3} for result in results)
-    assert all(result.valid_loss is not None for result in results)
+    assert all(result.validation_loss is not None for result in results)
     assert all('valid_mae' in result.metrics for result in results)
 
 
-def test_cross_validator_uses_recorded_valid_loss_without_extra_forward(tmp_path):
+def test_cross_validator_uses_recorded_validation_loss_without_extra_forward(tmp_path):
     x_path, y_path = _write_linear_data(tmp_path, n_data=6)
     counters = []
 
@@ -125,9 +125,9 @@ def test_cross_validator_uses_recorded_valid_loss_without_extra_forward(tmp_path
         counters.append(counter)
         data_handler = DataHandler(
             input_data_path=str(x_path),
-            input_idx=['x'],
+            input_columns=['x'],
             output_data_path=str(y_path),
-            output_idx=['y'],
+            output_columns=['y'],
             batch_size=2,
             split_type='index_split',
             train_indices=split.train_indices,
@@ -136,11 +136,11 @@ def test_cross_validator_uses_recorded_valid_loss_without_extra_forward(tmp_path
         )
         data_fitting = CountingDataFitting(
             data_handler=data_handler,
-            loss_criteria=torch.nn.MSELoss(),
+            loss_fn=torch.nn.MSELoss(),
             counter=counter,
         )
-        nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=context.seed)
-        optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+        nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=context.seed)
+        optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
         return ModelHandler(
             nn=nn,
             optimizer=optimizer,
@@ -158,7 +158,7 @@ def test_cross_validator_uses_recorded_valid_loss_without_extra_forward(tmp_path
 
     results = cv.run()
 
-    assert all(result.valid_loss is not None for result in results)
+    assert all(result.validation_loss is not None for result in results)
     assert [counter[0] for counter in counters] == [3, 3]
 
 

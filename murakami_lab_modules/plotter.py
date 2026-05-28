@@ -8,6 +8,25 @@ except ImportError as e:
         'Plotting utilities require matplotlib. '
         'Install it with `pip install murakami_lab_modules[plot]`.'
     ) from e
+from matplotlib.colors import LinearSegmentedColormap
+
+
+_COLORMAP_DEFINITIONS = {
+    'blue_white_red': ('#2f5f9f', '#f7f7f7', '#b5453c'),
+    'red_white_blue': ('#b5453c', '#f7f7f7', '#2f5f9f'),
+    'white_orange': ('#fffaf0', '#edae5a', '#9f4f24'),
+    'white_blue': ('#f7fbff', '#8fb5d6', '#2f5f9f'),
+}
+
+
+def _get_colormap(cmap: str | object):
+    if cmap is None:
+        return None
+    if not isinstance(cmap, str):
+        return cmap
+    if cmap in _COLORMAP_DEFINITIONS:
+        return LinearSegmentedColormap.from_list(cmap, _COLORMAP_DEFINITIONS[cmap])
+    return plt.get_cmap(cmap)
 
 
 class Plotter:
@@ -30,7 +49,8 @@ class Plotter:
             main_line_width: int = 2,
             marker_size: float = 10.0,
             plot_line_width: int = 3,
-            cmap_name: str = 'nipy_spectral',
+            cmap_name: str = 'tab10',
+            contour_cmap_name: str = 'blue_white_red',
             n_data: int = 5,
             cycle_color: bool = True,
             cycle_marker: bool = True,
@@ -50,6 +70,7 @@ class Plotter:
         self.marker_size = marker_size
         self.plot_line_width = plot_line_width
         self.cmap_name = cmap_name
+        self.contour_cmap_name = contour_cmap_name
         if n_data < 1:
             raise ValueError(f'n_data must be >= 1. {n_data} was given.')
         self.n_data = n_data
@@ -80,6 +101,7 @@ class Plotter:
 
         self.series_idx = 0
         self.base_z_order = 1
+        self.colorbars = []
 
     def _init_figure(self):
         plt.rcParams['font.family'] = self.font_type
@@ -103,7 +125,16 @@ class Plotter:
         else:
             self.fig.patch.set_alpha(1.0)
         self.ax.patch.set_alpha(1.0)
-        self.cmap = plt.get_cmap(self.cmap_name)
+        self.cmap = _get_colormap(self.cmap_name)
+        self.contour_cmap = _get_colormap(self.contour_cmap_name)
+
+    @staticmethod
+    def available_colormaps() -> tuple[str, ...]:
+        return tuple(_COLORMAP_DEFINITIONS)
+
+    @staticmethod
+    def get_colormap(cmap: str | object):
+        return _get_colormap(cmap)
 
     def _get_color(self, series: int, is_line: bool):
         color_idx = series % self.n_data if self.cycle_color else 0
@@ -303,13 +334,136 @@ class Plotter:
 
         self._finish_series(advance_series)
 
+    @staticmethod
+    def _as_array(data, name: str) -> np.ndarray:
+        array = np.asarray(data)
+        if array.size == 0:
+            raise ValueError(f'{name} must not be empty.')
+        return array
+
+    @classmethod
+    def _validate_contour_inputs(cls, x, y, z) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        x = cls._as_array(x, 'x')
+        y = cls._as_array(y, 'y')
+        z = cls._as_array(z, 'z')
+        if z.ndim != 2:
+            raise ValueError(f'z must be 2D for contour plots. z.shape={tuple(z.shape)}.')
+        if x.ndim == 1 and y.ndim == 1:
+            if z.shape != (y.size, x.size):
+                raise ValueError(
+                    'When x and y are 1D, z.shape must be (len(y), len(x)). '
+                    f'z.shape={tuple(z.shape)}, len(y)={y.size}, len(x)={x.size}.'
+                )
+            return x, y, z
+        if x.shape != z.shape or y.shape != z.shape:
+            raise ValueError(
+                'When x or y is 2D, x.shape, y.shape, and z.shape must match. '
+                f'x.shape={tuple(x.shape)}, y.shape={tuple(y.shape)}, z.shape={tuple(z.shape)}.'
+            )
+        return x, y, z
+
+    def _add_colorbar(
+            self,
+            mappable,
+            label: str = None,
+            fraction: float = 0.046,
+            pad: float = 0.04,
+            **kwargs
+    ):
+        colorbar = self.fig.colorbar(mappable, ax=self.ax, fraction=fraction, pad=pad, **kwargs)
+        colorbar.ax.tick_params(labelsize=self.sub_font_size)
+        if label is not None:
+            colorbar.set_label(label, fontsize=self.main_font_size)
+        self.colorbars.append(colorbar)
+        return colorbar
+
+    def contourf(
+            self,
+            x,
+            y,
+            z,
+            levels: int | list[float] | np.ndarray = 20,
+            cmap: str | object = None,
+            colorbar: bool = True,
+            colorbar_label: str = None,
+            alpha: float = 1.0,
+            extend: str = 'both',
+            z_order: int = None,
+            **kwargs
+    ):
+        x, y, z = self._validate_contour_inputs(x, y, z)
+        if cmap is None:
+            cmap = self.contour_cmap
+        else:
+            cmap = _get_colormap(cmap)
+        if z_order is None:
+            z_order = self.base_z_order - 1
+        contour_set = self.ax.contourf(
+            x,
+            y,
+            z,
+            levels=levels,
+            cmap=cmap,
+            alpha=alpha,
+            extend=extend,
+            zorder=z_order,
+            **kwargs
+        )
+        if colorbar:
+            self._add_colorbar(contour_set, label=colorbar_label)
+        return contour_set
+
+    def contour(
+            self,
+            x,
+            y,
+            z,
+            levels: int | list[float] | np.ndarray = 10,
+            colors: str | list[str] = '#333333',
+            cmap: str | object = None,
+            line_width: float = 1.0,
+            alpha: float = 0.9,
+            label: bool = False,
+            label_format: str = '%.3g',
+            z_order: int = None,
+            **kwargs
+    ):
+        x, y, z = self._validate_contour_inputs(x, y, z)
+        contour_kwargs = {}
+        if cmap is None:
+            contour_kwargs['colors'] = colors
+        else:
+            contour_kwargs['cmap'] = _get_colormap(cmap)
+        if z_order is None:
+            z_order = self.base_z_order
+        contour_set = self.ax.contour(
+            x,
+            y,
+            z,
+            levels=levels,
+            linewidths=line_width,
+            alpha=alpha,
+            zorder=z_order,
+            **contour_kwargs,
+            **kwargs
+        )
+        if label:
+            self.ax.clabel(contour_set, inline=True, fontsize=self.sub_font_size, fmt=label_format)
+        return contour_set
+
     def remove_plots(self, reset_idx: bool = True):
+        self.remove_colorbars()
         for line in list(self.ax.lines):
             line.remove()
         for collection in list(self.ax.collections):
             collection.remove()
         if reset_idx:
             self.series_idx = 0
+
+    def remove_colorbars(self):
+        for colorbar in self.colorbars:
+            colorbar.remove()
+        self.colorbars = []
 
     def add_details(
             self,

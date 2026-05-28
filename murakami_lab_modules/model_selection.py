@@ -70,7 +70,7 @@ class TrialResult:
     seed: int | None = None
     best_loss: float | None = None
     train_loss: float | None = None
-    valid_loss: float | None = None
+    validation_loss: float | None = None
     test_loss: float | None = None
     metrics: dict[str, float] = field(default_factory=dict)
     model_path: str | None = None
@@ -80,7 +80,7 @@ class TrialResult:
     error: str | None = None
     traceback: str | None = None
 
-    def objective(self, key: str = 'valid_loss') -> float | None:
+    def objective(self, key: str = 'validation_loss') -> float | None:
         if key in self.metrics:
             return self.metrics[key]
         return getattr(self, key)
@@ -95,7 +95,7 @@ class TrialResult:
             'seed': self.seed,
             'best_loss': self.best_loss,
             'train_loss': self.train_loss,
-            'valid_loss': self.valid_loss,
+            'validation_loss': self.validation_loss,
             'test_loss': self.test_loss,
             'metrics': self.metrics,
             'params': utils.serialize_config_value(self.params),
@@ -113,7 +113,7 @@ class SearchResult:
     params: dict[str, object]
     param_index: int
     fold_results: list[TrialResult]
-    score_key: str = 'valid_loss'
+    score_key: str = 'validation_loss'
     greater_is_better: bool = False
     mean_score: float | None = None
     std_score: float | None = None
@@ -255,6 +255,8 @@ def _loss_phase_from_key(key: str) -> str | None:
     if not key.endswith('_loss'):
         return None
     phase = key[:-len('_loss')]
+    if phase == 'validation':
+        return 'valid'
     return phase if phase in {'train', 'valid', 'test'} else None
 
 
@@ -281,23 +283,31 @@ def _recorded_data_loss(model_handler, phase: str, prefer_best: bool = True) -> 
         return None
 
     record = model_handler.evolution[idx]
-    key = phase
-    if getattr(model_handler, 'has_reg', False) and f'{phase}_data' in record:
-        key = f'{phase}_data'
+    if phase == 'train':
+        total_key = 'train_loss'
+        data_key = 'train_data_loss'
+    elif phase == 'valid':
+        total_key = 'validation_loss'
+        data_key = 'validation_data_loss'
+    else:
+        total_key = f'{phase}_loss'
+        data_key = f'{phase}_data_loss'
+    key = data_key if getattr(model_handler, 'has_reg', False) and data_key in record else total_key
     if key not in record:
         return None
     return utils.to_float(record[key])
 
 
 def collect_data_losses(model_handler, phases: Sequence[str]) -> dict[str, float | None]:
-    losses = {'train_loss': None, 'valid_loss': None, 'test_loss': None}
+    losses = {'train_loss': None, 'validation_loss': None, 'test_loss': None}
     for phase in phases:
         if phase not in {'train', 'valid', 'test'}:
             raise ValueError(f"loss phase must be one of 'train', 'valid', or 'test'. {phase} was given.")
         loss = _recorded_data_loss(model_handler, phase=phase)
         if loss is None:
             loss = evaluate_data_loss(model_handler, phase)
-        losses[f'{phase}_loss'] = loss
+        key = 'validation_loss' if phase == 'valid' else f'{phase}_loss'
+        losses[key] = loss
     return losses
 
 
@@ -363,7 +373,7 @@ def _result_from_model_handler(
         seed=context.seed,
         best_loss=utils.to_float(getattr(model_handler, 'best_loss', None)),
         train_loss=losses['train_loss'],
-        valid_loss=losses['valid_loss'],
+        validation_loss=losses['validation_loss'],
         test_loss=losses['test_loss'],
         metrics=metric_values,
         model_path=getattr(model_handler, 'model_path', None),
@@ -488,7 +498,7 @@ class GridSearch:
             splitter: KFoldSplitter,
             indices: int | Sequence[int] | np.ndarray,
             param_grid: Mapping[str, Iterable[object]],
-            score_key: str = 'valid_loss',
+            score_key: str = 'validation_loss',
             greater_is_better: bool = False,
             metrics: Sequence[Metric] = (),
             metric_phases: Sequence[str] = ('valid',),
@@ -580,7 +590,7 @@ class RandomSearch(GridSearch):
             indices: int | Sequence[int] | np.ndarray,
             param_space: Mapping[str, Sequence[object] | Callable[[np.random.Generator], object] | object],
             n_iter: int,
-            score_key: str = 'valid_loss',
+            score_key: str = 'validation_loss',
             greater_is_better: bool = False,
             metrics: Sequence[Metric] = (),
             metric_phases: Sequence[str] = ('valid',),
@@ -620,7 +630,7 @@ class NestedCrossValidator:
             inner_splitter: KFoldSplitter,
             indices: int | Sequence[int] | np.ndarray,
             param_grid: Mapping[str, Iterable[object]],
-            score_key: str = 'valid_loss',
+            score_key: str = 'validation_loss',
             greater_is_better: bool = False,
             metrics: Sequence[Metric] = (),
             metric_phases: Sequence[str] = ('valid', 'test'),

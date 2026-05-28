@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from . import utils
 from . import dataset as _dataset
-from .normalizer import AbstractNormalizer, IdentityNormalizer, StandardNormalizer
+from .normalizer import BaseNormalizer, IdentityNormalizer, StandardNormalizer
 
 IndexLike = torch.Tensor | np.ndarray
 
@@ -22,18 +22,18 @@ class DataHandler:
     def __init__(
             self,
             input_data_path: str,
-            input_idx: list[int | str] = None,
-            output_idx: list[int | str] = None,
+            input_columns: list[int | str] = None,
+            output_columns: list[int | str] = None,
             batch_size: int = None,
             device_name: str = 'cpu',
             label_data_path: str = None,
-            label_idx: list[int | str] = None,
+            label_columns: list[int | str] = None,
             output_data_path: str = None,
             input_key: str = None,
             output_key: str = None,
             label_key: str = None,
-            input_normalizer: AbstractNormalizer = None,
-            output_normalizer: AbstractNormalizer = None,
+            input_normalizer: BaseNormalizer = None,
+            output_normalizer: BaseNormalizer = None,
             output_dtype: torch.dtype | str = torch.float32,
             normalize_output: bool = True,
             split_type: str = 'random_split',
@@ -50,9 +50,9 @@ class DataHandler:
         utils.initialize_random_seed(random_seed)
 
         self.input_data_path = input_data_path
-        self.input_idx = input_idx
-        self.output_idx = output_idx
-        self.label_idx = label_idx
+        self.input_columns = input_columns
+        self.output_columns = output_columns
+        self.label_columns = label_columns
         self.input_key = input_key
         self.output_key = output_key
         self.label_key = label_key
@@ -94,8 +94,8 @@ class DataHandler:
             labels=None,
             batch_size: int = None,
             device_name: str = 'cpu',
-            input_normalizer: AbstractNormalizer = None,
-            output_normalizer: AbstractNormalizer = None,
+            input_normalizer: BaseNormalizer = None,
+            output_normalizer: BaseNormalizer = None,
             output_dtype: torch.dtype | str = torch.float32,
             normalize_output: bool = True,
             split_type: str = 'random_split',
@@ -115,9 +115,9 @@ class DataHandler:
         obj.input_data_path = None
         obj.output_data_path = None
         obj.label_data_path = None
-        obj.input_idx = None
-        obj.output_idx = None
-        obj.label_idx = None
+        obj.input_columns = None
+        obj.output_columns = None
+        obj.label_columns = None
         obj.input_key = None
         obj.output_key = None
         obj.label_key = None
@@ -160,12 +160,12 @@ class DataHandler:
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
             'input_data_path': self.input_data_path,
-            'input_idx': self.input_idx,
-            'output_idx': self.output_idx,
+            'input_columns': self.input_columns,
+            'output_columns': self.output_columns,
             'batch_size': self.batch_size,
             'device_name': self.device_name,
             'label_data_path': self.label_data_path,
-            'label_idx': self.label_idx,
+            'label_columns': self.label_columns,
             'output_data_path': self.output_data_path,
             'input_key': self.input_key,
             'output_key': self.output_key,
@@ -192,9 +192,9 @@ class DataHandler:
                 'label_data_path': self.label_data_path,
             },
             'columns': {
-                'input_idx': self.input_idx,
-                'output_idx': self.output_idx,
-                'label_idx': self.label_idx,
+                'input_columns': self.input_columns,
+                'output_columns': self.output_columns,
+                'label_columns': self.label_columns,
                 'input_key': self.input_key,
                 'output_key': self.output_key,
                 'label_key': self.label_key,
@@ -301,7 +301,7 @@ class DataHandler:
         }
 
     @staticmethod
-    def _normalizer_summary(normalizer: AbstractNormalizer) -> dict[str, object]:
+    def _normalizer_summary(normalizer: BaseNormalizer) -> dict[str, object]:
         state_summary = {}
         for key, value in normalizer.state_dict().items():
             if torch.is_tensor(value):
@@ -335,18 +335,18 @@ class DataHandler:
         return summary
 
     def _load_datafiles(self):
-        self.inputs = self._load_datafile(self.input_data_path, self.input_idx, self.input_key, self.csv_encoding)
+        self.inputs = self._load_datafile(self.input_data_path, self.input_columns, self.input_key, self.csv_encoding)
         self.outputs = self._load_datafile(
             self.output_data_path,
-            self.output_idx,
+            self.output_columns,
             self.output_key,
             self.csv_encoding,
             dtype=self.output_dtype
         )
-        if self.label_idx is None and self.label_key is None:
+        if self.label_columns is None and self.label_key is None:
             self.labels = np.arange(self.inputs.shape[0]).reshape(-1, 1)
         else:
-            self.labels = self._load_label_file(self.label_data_path, self.label_idx, self.label_key, self.csv_encoding)
+            self.labels = self._load_label_file(self.label_data_path, self.label_columns, self.label_key, self.csv_encoding)
         self._validate_data_lengths()
 
     def _validate_data_lengths(self):
@@ -372,7 +372,7 @@ class DataHandler:
             cls,
             dtype: torch.dtype,
             normalize_output: bool
-    ) -> AbstractNormalizer:
+    ) -> BaseNormalizer:
         if normalize_output and utils.is_floating_dtype(dtype):
             return StandardNormalizer()
         return IdentityNormalizer()
@@ -445,24 +445,24 @@ class DataHandler:
         return data
 
     @staticmethod
-    def _select_columns(data, indices: list[int | str] = None):
+    def _select_columns(data, columns: list[int | str] = None):
         if isinstance(data, pd.DataFrame):
-            if indices is None:
+            if columns is None:
                 return data.to_numpy()
-            if len(indices) == 0:
-                raise ValueError('indices must not be empty.')
-            if type(indices[0]) is str:
-                return data.loc[:, indices].to_numpy()
-            return data.iloc[:, indices].to_numpy()
+            if len(columns) == 0:
+                raise ValueError('columns must not be empty.')
+            if type(columns[0]) is str:
+                return data.loc[:, columns].to_numpy()
+            return data.iloc[:, columns].to_numpy()
 
         data = DataHandler._as_2d_array(data)
-        if indices is None:
+        if columns is None:
             return data
-        if len(indices) == 0:
-            raise ValueError('indices must not be empty.')
-        if type(indices[0]) is str:
+        if len(columns) == 0:
+            raise ValueError('columns must not be empty.')
+        if type(columns[0]) is str:
             raise TypeError('String column indices are only supported for CSV data. Use key for dict-like data.')
-        return data[:, indices]
+        return data[:, columns]
 
     @staticmethod
     def _to_feature_tensor(data, dtype: torch.dtype = torch.float32) -> torch.Tensor:
@@ -482,26 +482,26 @@ class DataHandler:
     @staticmethod
     def _load_datafile(
             data_path: str,
-            indices: list[int | str] = None,
+            columns: list[int | str] = None,
             key: str = None,
             csv_encoding: str = None,
             dtype: torch.dtype = torch.float32
     ) -> torch.Tensor:
         raw_data = DataHandler._load_raw_file(data_path, csv_encoding=csv_encoding)
         selected = DataHandler._select_key(raw_data, key=key, data_path=data_path)
-        selected = DataHandler._select_columns(selected, indices=indices)
+        selected = DataHandler._select_columns(selected, columns=columns)
         return DataHandler._to_feature_tensor(selected, dtype=dtype)
 
     @staticmethod
     def _load_label_file(
             data_path: str,
-            indices: list[int | str] = None,
+            columns: list[int | str] = None,
             key: str = None,
             csv_encoding: str = None
     ) -> np.ndarray:
         raw_data = DataHandler._load_raw_file(data_path, csv_encoding=csv_encoding)
         selected = DataHandler._select_key(raw_data, key=key, data_path=data_path)
-        selected = DataHandler._select_columns(selected, indices=indices)
+        selected = DataHandler._select_columns(selected, columns=columns)
         return DataHandler._to_label_array(selected)
 
     def _normalize_split_data(self):

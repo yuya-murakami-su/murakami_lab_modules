@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 
 from . import utils
-from .losses import mse_error, relative_error
+from .metrics import relative_error
 
 logger = utils.get_logger(__name__)
 
@@ -17,10 +17,10 @@ __all__ = [
     'Callback',
     'BestModelTracker',
     'CSVLogger',
-    'CheckpointBest',
+    'BestCheckpointSaver',
     'ConsoleLogger',
     'EarlyStopping',
-    'FinalStateDictSaver',
+    'FinalCheckpointSaver',
     'GradientNormMonitor',
     'HistoryRecorder',
     'HistoryLogger',
@@ -28,25 +28,28 @@ __all__ = [
     'LearningRateLogger',
     'LossMonitor',
     'MaxTime',
-    'SaveLossMonitor',
-    'SaveParityPlot',
-    'SavePredictionResults',
-    'StateDictsSaver',
+    'LossPlotSaver',
+    'ParityPlotSaver',
+    'PredictionResultSaver',
+    'PeriodicCheckpointSaver',
     'TargetLossReached',
     'TerminateOnNaN',
     'RunSummaryLogger',
     'RegularizationReportSaver',
-    'mse_error',
     'relative_error',
 ]
 
 
+def prediction_mse(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    return torch.square(y_true - y_pred).mean(dim=1, keepdim=True)
+
+
 def _get_label_columns(data_handler) -> list[str]:
-    if data_handler.label_idx is None:
+    if data_handler.label_columns is None:
         return ['label']
-    if len(data_handler.label_idx) == 1:
-        return [str(data_handler.label_idx[0])]
-    return [str(label) for label in data_handler.label_idx]
+    if len(data_handler.label_columns) == 1:
+        return [str(data_handler.label_columns[0])]
+    return [str(label) for label in data_handler.label_columns]
 
 
 def _get_plotter_class():
@@ -160,7 +163,7 @@ class Callback:
 class EarlyStopping(Callback):
     def __init__(
             self,
-            monitor: str = 'valid',
+            monitor: str = 'validation_loss',
             patience: int = 100,
             mode: str = 'min',
             min_delta: float = 0.0,
@@ -253,7 +256,7 @@ class TargetLossReached(Callback):
     def __init__(
             self,
             target: float,
-            monitor: str = 'valid',
+            monitor: str = 'validation_loss',
             mode: str = 'below',
             every: int = 1,
             priority: int = 100,
@@ -401,10 +404,10 @@ class CSVLogger(HistoryLogger):
     pass
 
 
-class CheckpointBest(Callback):
+class BestCheckpointSaver(Callback):
     def __init__(
             self,
-            monitor: str = 'valid',
+            monitor: str = 'validation_loss',
             mode: str = 'min',
             min_delta: float = 0.0,
             path: str | Path = None,
@@ -513,7 +516,7 @@ class BestModelTracker(Callback):
     def _monitor(self, model_handler) -> str:
         if self.monitor is not None:
             return self.monitor
-        return 'valid' if model_handler.has_data else 'reg_total'
+        return 'validation_loss' if model_handler.has_data else 'regularization_loss'
 
     def on_train_begin(self, model_handler):
         model_handler.best_loss = None
@@ -648,15 +651,21 @@ class ConsoleLogger(Callback):
 
         if model_handler.has_data:
             if model_handler.has_reg:
-                valid_reg_str = ', '.join(
-                    [f'{name}: {losses[f"valid_{name}"]:.3e}' for name in model_handler.regularization.reg_names]
+                validation_regularization = ', '.join(
+                    [
+                        f'{name}: {losses[f"validation_{name}"]:.3e}'
+                        for name in model_handler.regularization.term_names
+                    ]
                 )
                 message = (
                     f'\r[{pd.Timestamp.now():%H:%M:%S}] '
                     f'{model_handler.epoch + 1: >5} {dt_str} | '
-                    f'Train {losses["train"]:.3e} ({losses["train_data"]:.3e} & {losses["train_reg"]:.3e}), '
-                    f'Valid {losses["valid"]:.3e} ({losses["valid_data"]:.3e} & {losses["valid_reg"]:.3e}) | '
-                    f'{valid_reg_str} | '
+                    f'Train {losses["train_loss"]:.3e} '
+                    f'({losses["train_data_loss"]:.3e} & {losses["train_regularization_loss"]:.3e}), '
+                    f'Validation {losses["validation_loss"]:.3e} '
+                    f'({losses["validation_data_loss"]:.3e} & '
+                    f'{losses["validation_regularization_loss"]:.3e}) | '
+                    f'{validation_regularization} | '
                     f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                     f'lr {model_handler.optimizer.current_lr():.2e}'
                 )
@@ -664,18 +673,19 @@ class ConsoleLogger(Callback):
                 message = (
                     f'\r[{pd.Timestamp.now():%H:%M:%S}] '
                     f'{model_handler.epoch + 1: >5} {dt_str} | '
-                    f'Train {losses["train"]:.3e}, Valid {losses["valid"]:.3e} | '
+                    f'Train {losses["train_loss"]:.3e}, '
+                    f'Validation {losses["validation_loss"]:.3e} | '
                     f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                     f'lr {model_handler.optimizer.current_lr():.2e}'
                 )
         else:
             reg_str = ', '.join(
-                [f'{name}: {losses[name]:.3e}' for name in model_handler.regularization.reg_names]
+                [f'{name}: {losses[name]:.3e}' for name in model_handler.regularization.term_names]
             )
             message = (
                 f'\r[{pd.Timestamp.now():%H:%M:%S}] '
                 f'{model_handler.epoch + 1: >5} {dt_str} | '
-                f'Reg {losses["reg_total"]:.3e} | {reg_str} | '
+                f'Reg {losses["regularization_loss"]:.3e} | {reg_str} | '
                 f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                 f'lr {model_handler.optimizer.current_lr():.2e}'
             )
@@ -717,7 +727,7 @@ class ConsoleLogger(Callback):
         logger.info(message)
 
 
-class FinalStateDictSaver(Callback):
+class FinalCheckpointSaver(Callback):
     def __init__(self, save_optimizer: bool = True, priority: int = 400):
         super().__init__(every=None, run_on_train_end=True, priority=priority)
         self.save_optimizer = save_optimizer
@@ -760,7 +770,7 @@ class RunSummaryLogger(Callback):
             'best_epoch',
             'best_loss',
             'train_loss',
-            'valid_loss',
+            'validation_loss',
             'test_loss',
             'stop_reason',
             'n_epochs',
@@ -792,13 +802,13 @@ class RunSummaryLogger(Callback):
         return model_handler._get_loss('test')['total']
 
     @staticmethod
-    def _recorded_loss(model_handler, key: str) -> float:
+    def _recorded_loss(model_handler, total_key: str, data_key: str) -> float:
         record = getattr(model_handler, 'current_evolution', None)
         if record is None:
             return np.nan
-        if model_handler.has_reg and f'{key}_data' in record:
-            return record[f'{key}_data']
-        return record.get(key, np.nan)
+        if model_handler.has_reg and data_key in record:
+            return record[data_key]
+        return record.get(total_key, np.nan)
 
     def on_train_end(self, model_handler):
         if not self.run_on_train_end:
@@ -813,8 +823,8 @@ class RunSummaryLogger(Callback):
             str(model_handler.model_path),
             None if getattr(model_handler, 'best_epoch', None) is None else model_handler.best_epoch + 1,
             getattr(model_handler, 'best_loss', None),
-            self._recorded_loss(model_handler, 'train'),
-            self._recorded_loss(model_handler, 'valid'),
+            self._recorded_loss(model_handler, 'train_loss', 'train_data_loss'),
+            self._recorded_loss(model_handler, 'validation_loss', 'validation_data_loss'),
             test_loss,
             getattr(model_handler, 'stop_reason', None),
             model_handler.epoch,
@@ -826,7 +836,7 @@ class RunSummaryLogger(Callback):
         model_handler.run_summary = self.run_summary
 
 
-class SaveLossMonitor(Callback):
+class LossPlotSaver(Callback):
     def __init__(
             self,
             need_data: bool = True,
@@ -862,7 +872,7 @@ class SaveLossMonitor(Callback):
         model_path = _require_saved_results(model_handler, self.__class__.__name__)
         self.output_dir = model_path / 'loss_evolution'
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.n_data, self.get_xy = model_handler.get_loss_info_fnc(need_data=self.need_data, need_reg=self.need_reg)
+        self.n_data, self.get_xy = model_handler.get_loss_series(need_data=self.need_data, need_reg=self.need_reg)
         Plotter = _get_plotter_class()
         self.plotter = Plotter(
             window_name='',
@@ -884,11 +894,11 @@ class SaveLossMonitor(Callback):
         self.plotter.close()
 
 
-class SavePredictionResults(Callback):
+class PredictionResultSaver(Callback):
     def __init__(
             self,
             prediction_metrics: tuple[Callable[[torch.Tensor, torch.Tensor], torch.Tensor], ...] = (
-                    mse_error,
+                    prediction_mse,
                     relative_error
             ),
             normalized_metrics: tuple[Callable[[torch.Tensor, torch.Tensor], torch.Tensor], ...] = (),
@@ -924,9 +934,9 @@ class SavePredictionResults(Callback):
                     for idx, column in enumerate(label_columns):
                         batch[column] = label_np[:, idx]
                     batch['key'] = np.full(label_np.shape[0], key, dtype=object)
-                    for idx in range(model_handler.nn.n_input):
+                    for idx in range(model_handler.nn.input_dim):
                         batch[f'x_{idx}'] = x_[:, idx].detach().cpu().numpy()
-                    for idx in range(model_handler.nn.n_output):
+                    for idx in range(model_handler.nn.output_dim):
                         batch[f'y_true_{idx}'] = y_[:, idx].detach().cpu().numpy()
                         batch[f'y_pred_{idx}'] = y_pred_[:, idx].detach().cpu().numpy()
                     for metric in self.prediction_metrics:
@@ -939,9 +949,9 @@ class SavePredictionResults(Callback):
 
         columns = (
                 label_columns + ['key'] +
-                [f'x_{i}' for i in range(model_handler.nn.n_input)] +
-                [f'y_true_{i}' for i in range(model_handler.nn.n_output)] +
-                [f'y_pred_{i}' for i in range(model_handler.nn.n_output)] +
+                [f'x_{i}' for i in range(model_handler.nn.input_dim)] +
+                [f'y_true_{i}' for i in range(model_handler.nn.output_dim)] +
+                [f'y_pred_{i}' for i in range(model_handler.nn.output_dim)] +
                 [f'{metric.__name__}_pred' for metric in self.prediction_metrics] +
                 [f'{metric.__name__}_norm' for metric in self.normalized_metrics]
         )
@@ -950,7 +960,7 @@ class SavePredictionResults(Callback):
 
     def on_train_begin(self, model_handler):
         if not model_handler.has_data:
-            raise ValueError('SavePredictionResults callback cannot be used if the model does not have data_fitting.')
+            raise ValueError('PredictionResultSaver callback cannot be used if the model does not have data_fitting.')
         model_path = _require_saved_results(model_handler, self.__class__.__name__)
         self.output_dir = model_path / 'prediction_results'
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -965,7 +975,7 @@ class SavePredictionResults(Callback):
             df.to_csv(self.output_dir / f'{_current_epoch_number(model_handler):0>6}.csv', index=False)
 
 
-class SaveParityPlot(Callback):
+class ParityPlotSaver(Callback):
     def __init__(
             self,
             every: int = None,
@@ -980,8 +990,8 @@ class SaveParityPlot(Callback):
         self.output_dir = None
 
     def save_parity_plot(self, model_handler, folder: Path):
-        y_max = torch.full([1, model_handler.nn.n_output], -torch.inf).to(model_handler.device)
-        y_min = torch.full([1, model_handler.nn.n_output], torch.inf).to(model_handler.device)
+        y_max = torch.full([1, model_handler.nn.output_dim], -torch.inf).to(model_handler.device)
+        y_min = torch.full([1, model_handler.nn.output_dim], torch.inf).to(model_handler.device)
         model_handler.nn.eval()
         with torch.no_grad():
             results = {}
@@ -1001,7 +1011,7 @@ class SaveParityPlot(Callback):
 
                 results[key] = [torch.vstack(y_list), torch.vstack(y_pred_list)]
 
-        for y_idx in range(model_handler.nn.n_output):
+        for y_idx in range(model_handler.nn.output_dim):
             Plotter = _get_plotter_class()
             y_max_, y_min_ = y_max[0, y_idx].cpu(), y_min[0, y_idx].cpu()
             dy = (y_max_ - y_min_) * 0.1
@@ -1019,7 +1029,7 @@ class SaveParityPlot(Callback):
             total_plotter.add_details(
                 title=f'Parity plot ({y_idx=})',
                 x_label=r'$y_{true}$',
-                y_label=r'$y_{calc}$',
+                y_label=r'$y_{pred}$',
                 x_lim=(y_min_ - dy, y_max_ + dy),
                 y_lim=(y_min_ - dy, y_max_ + dy)
             )
@@ -1030,7 +1040,7 @@ class SaveParityPlot(Callback):
             )
             individual_plotter.add_details(
                 x_label=r'$y_{true}$',
-                y_label=r'$y_{calc}$',
+                y_label=r'$y_{pred}$',
                 x_lim=(y_min_ - dy, y_max_ + dy),
                 y_lim=(y_min_ - dy, y_max_ + dy)
             )
@@ -1056,7 +1066,7 @@ class SaveParityPlot(Callback):
 
     def on_train_begin(self, model_handler):
         if not model_handler.has_data:
-            raise ValueError('SaveParityPlot callback cannot be used if the model does not have data_fitting.')
+            raise ValueError('ParityPlotSaver callback cannot be used if the model does not have data_fitting.')
         model_path = _require_saved_results(model_handler, self.__class__.__name__)
         self.output_dir = model_path / 'parity_plot'
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1094,7 +1104,7 @@ class LossMonitor(Callback):
     def on_train_begin(self, model_handler):
         if not self.show:
             return
-        self.n_data, self.get_xy = model_handler.get_loss_info_fnc(need_data=self.need_data, need_reg=self.need_reg)
+        self.n_data, self.get_xy = model_handler.get_loss_series(need_data=self.need_data, need_reg=self.need_reg)
         Plotter = _get_plotter_class()
         self.plotter = Plotter(
             window_name=self.window_name,
@@ -1122,7 +1132,7 @@ class LossMonitor(Callback):
             self.plotter.close()
 
 
-class StateDictsSaver(Callback):
+class PeriodicCheckpointSaver(Callback):
     def __init__(
             self,
             every: int = None,

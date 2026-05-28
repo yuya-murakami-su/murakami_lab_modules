@@ -56,11 +56,11 @@ def test_data_handler_keeps_string_labels_and_normalizes_with_exclusions(tmp_pat
 
     data_handler = DataHandler(
         input_data_path=str(x_path),
-        input_idx=['id', 'value'],
+        input_columns=['id', 'value'],
         output_data_path=str(y_path),
-        output_idx=['target'],
+        output_columns=['target'],
         label_data_path=str(label_path),
-        label_idx=['label'],
+        label_columns=['label'],
         input_normalizer=StandardNormalizer(exclude_indices=[0]),
         batch_size=2,
         split_ratio=(0.5, 0.25, 0.25),
@@ -84,7 +84,7 @@ def test_data_handler_keeps_string_labels_and_normalizes_with_exclusions(tmp_pat
     assert summary['n_data']['train'] == 2
     assert summary['labels']['counts']['bc'] == 1
     assert summary['labels']['counts']['data'] == 2
-    assert summary['normalizers']['input']['state']['ave']['shape'] == [1, 2]
+    assert summary['normalizers']['input']['state']['mean']['shape'] == [1, 2]
 
     json_path = tmp_path / 'summary.json'
     csv_path = tmp_path / 'summary.csv'
@@ -107,11 +107,11 @@ def test_data_handler_can_use_torch_dataloader_with_string_labels(tmp_path):
 
     data_handler = DataHandler(
         input_data_path=str(x_path),
-        input_idx=['x'],
+        input_columns=['x'],
         output_data_path=str(y_path),
-        output_idx=['y'],
+        output_columns=['y'],
         label_data_path=str(label_path),
-        label_idx=['label'],
+        label_columns=['label'],
         batch_size=2,
         split_ratio=(1.0,),
         use_train_as_valid=True,

@@ -6,7 +6,7 @@ from murakami_lab_modules.input_generator import InputGenerator
 
 def test_random_generator_can_cache_samples():
     generator = InputGenerator(
-        size_of_generated_inputs=5,
+        n_samples=5,
         input_range=((0.0, 1.0), (10.0, 20.0)),
         sampling='random',
         resample=False,
@@ -25,7 +25,7 @@ def test_random_generator_can_cache_samples():
 
 def test_random_generator_resamples_when_requested():
     generator = InputGenerator(
-        size_of_generated_inputs=5,
+        n_samples=5,
         input_range=((0.0, 1.0),),
         sampling='random',
         resample=True,
@@ -37,7 +37,7 @@ def test_random_generator_resamples_when_requested():
 
 def test_sobol_generator_is_reproducible_with_same_seed():
     kwargs = {
-        'size_of_generated_inputs': 8,
+        'n_samples': 8,
         'input_range': ((0.0, 1.0), (0.0, 2.0)),
         'sampling': 'sobol',
         'random_seed': 10,
@@ -53,7 +53,7 @@ def test_sobol_generator_is_reproducible_with_same_seed():
 
 def test_log_scale_samples_within_original_range():
     generator = InputGenerator(
-        size_of_generated_inputs=16,
+        n_samples=16,
         input_range=((0.0, 100.0), (1.0, 10.0)),
         sampling='sobol',
         scale=('log', 'linear'),
@@ -69,7 +69,7 @@ def test_log_scale_samples_within_original_range():
 
 def test_filter_func_rejects_candidates():
     generator = InputGenerator(
-        size_of_generated_inputs=20,
+        n_samples=20,
         input_range=((-1.0, 1.0), (-1.0, 1.0)),
         sampling='sobol',
         filter_func=lambda x: x[:, 0] ** 2 + x[:, 1] ** 2 <= 1.0,
@@ -86,7 +86,7 @@ def test_filter_func_rejects_candidates():
 
 def test_filter_func_failure_has_clear_error():
     generator = InputGenerator(
-        size_of_generated_inputs=3,
+        n_samples=3,
         input_range=((0.0, 1.0),),
         filter_func=lambda x: torch.zeros(x.shape[0], dtype=torch.bool, device=x.device),
         max_attempts=2,
@@ -98,7 +98,7 @@ def test_filter_func_failure_has_clear_error():
 
 def test_fixed_inputs_and_requires_grad_false():
     generator = InputGenerator(
-        size_of_generated_inputs=2,
+        n_samples=2,
         sampling='fixed',
         inputs=[[1.0, 2.0], [3.0, 4.0]],
         requires_grad=False,

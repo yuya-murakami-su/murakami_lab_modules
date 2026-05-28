@@ -6,10 +6,10 @@ from murakami_lab_modules.data_fitting import BinaryClassificationFitting, DataF
 from murakami_lab_modules.data_handler import DataHandler
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import ConstantLROptimizer
-from murakami_lab_modules.predictor import NNPredictor
+from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.predictor import NeuralNetworkPredictor
 from murakami_lab_modules.regularization import Regularization
-from murakami_lab_modules.losses import binary_accuracy_from_logits, multiclass_accuracy_from_logits
+from murakami_lab_modules.metrics import binary_accuracy_from_logits, multiclass_accuracy_from_logits
 
 
 class DummyInputGenerator:
@@ -43,9 +43,9 @@ def _make_data_handler(tmp_path):
 
     return DataHandler(
         input_data_path=str(x_path),
-        input_idx=['x'],
+        input_columns=['x'],
         output_data_path=str(y_path),
-        output_idx=['y'],
+        output_columns=['y'],
         batch_size=2,
         split_ratio=(1.0,),
         use_train_as_valid=True,
@@ -55,9 +55,9 @@ def _make_data_handler(tmp_path):
 
 def test_model_handler_trains_one_epoch_and_saves_files(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -86,7 +86,7 @@ def test_model_handler_trains_one_epoch_and_saves_files(tmp_path):
         'best_epoch',
         'best_loss',
         'train_loss',
-        'valid_loss',
+        'validation_loss',
         'test_loss',
         'stop_reason',
         'n_epochs',
@@ -101,9 +101,9 @@ def test_model_handler_can_evaluate_test_loss_in_run_summary(tmp_path):
     pd.DataFrame({'y': [0.0, 2.0, 4.0, 6.0]}).to_csv(y_path, index=False)
     data_handler = DataHandler(
         input_data_path=str(x_path),
-        input_idx=['x'],
+        input_columns=['x'],
         output_data_path=str(y_path),
-        output_idx=['y'],
+        output_columns=['y'],
         batch_size=2,
         split_type='index_split',
         train_indices=[0, 1],
@@ -111,9 +111,9 @@ def test_model_handler_can_evaluate_test_loss_in_run_summary(tmp_path):
         use_train_as_valid=True,
         device_name='cpu',
     )
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -133,9 +133,9 @@ def test_model_handler_can_evaluate_test_loss_in_run_summary(tmp_path):
 
 def test_model_handler_can_skip_heavy_model_files(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -160,9 +160,9 @@ def test_model_handler_can_skip_heavy_model_files(tmp_path):
 
 def test_model_handler_can_disable_history_file(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -182,9 +182,9 @@ def test_model_handler_can_disable_history_file(tmp_path):
 
 def test_model_handler_can_keep_sparse_history(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=0.0)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=0.0)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -208,9 +208,9 @@ def test_model_handler_can_keep_sparse_history(tmp_path):
 
 def test_model_handler_can_skip_in_memory_history(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -232,9 +232,9 @@ def test_model_handler_can_skip_in_memory_history(tmp_path):
 
 def test_save_model_false_skips_best_state_snapshot(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -256,9 +256,9 @@ def test_save_model_false_skips_best_state_snapshot(tmp_path):
 
 def test_model_handler_can_disable_all_file_outputs(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -279,9 +279,9 @@ def test_model_handler_can_disable_all_file_outputs(tmp_path):
 
 def test_save_result_false_skips_best_state_snapshot(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -303,9 +303,9 @@ def test_save_result_false_skips_best_state_snapshot(tmp_path):
 
 def test_model_handler_verbose_false_still_saves_results(tmp_path, capsys):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -328,13 +328,13 @@ def test_model_handler_verbose_false_still_saves_results(tmp_path, capsys):
 
 def test_model_handler_with_regularization_saves_weight_report(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     regularization = OutputMagnitudeRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weights=[0.1],
-        reg_names=['output_magnitude'],
+        weights=[0.1],
+        term_names=['output_magnitude'],
     )
     model_handler = ModelHandler(
         nn=nn,
@@ -358,7 +358,7 @@ def test_model_handler_with_regularization_saves_weight_report(tmp_path):
 
 def test_data_fitting_caches_positional_nn_call_style(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
     nn = PositionalOnlyNetwork()
     x, y, label = next(data_handler('train'))
 
@@ -368,11 +368,11 @@ def test_data_fitting_caches_positional_nn_call_style(tmp_path):
     assert data_fitting._nn_call_styles[id(nn)] == 'positional'
 
 
-def test_nn_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path):
+def test_neural_network_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -383,7 +383,7 @@ def test_nn_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path
     )
     model_handler()
 
-    predictor = NNPredictor(model_path=model_handler.model_path)
+    predictor = NeuralNetworkPredictor(model_path=model_handler.model_path)
     np_output = predictor(np.asarray([[1.0], [2.0]], dtype=np.float32))
     torch_output = predictor(torch.tensor([[1.0], [2.0]], dtype=torch.float32))
 
@@ -409,8 +409,8 @@ def test_multiclass_classification_fitting_trains_and_predictor_postprocesses(tm
         use_train_as_valid=True,
     )
     data_fitting = MultiClassClassificationFitting(data_handler)
-    nn = FeedForwardNeuralNetwork(n_input=2, n_output=2, n_layer=1, n_node=4, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-2)
+    nn = FeedForwardNeuralNetwork(input_dim=2, output_dim=2, n_hidden_layers=1, hidden_dim=4, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-2)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -429,12 +429,12 @@ def test_multiclass_classification_fitting_trains_and_predictor_postprocesses(tm
     assert loss_info['y_pred'].shape == (4, 2)
     assert 0.0 <= multiclass_accuracy_from_logits(y, loss_info['y_pred']).item() <= 1.0
 
-    probability_predictor = NNPredictor(model_path=model_handler.model_path, postprocess='probability')
+    probability_predictor = NeuralNetworkPredictor(model_path=model_handler.model_path, postprocess='probability')
     probabilities = probability_predictor(np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32))
     assert probabilities.shape == (2, 2)
     assert np.allclose(probabilities.sum(axis=1), np.ones(2), atol=1e-6)
 
-    class_predictor = NNPredictor(model_path=model_handler.model_path, postprocess='class')
+    class_predictor = NeuralNetworkPredictor(model_path=model_handler.model_path, postprocess='class')
     classes = class_predictor(torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=torch.float32))
     assert classes.shape == (2,)
     assert classes.dtype == torch.long
@@ -450,7 +450,7 @@ def test_binary_classification_fitting_uses_bce_with_logits():
         use_train_as_valid=True,
     )
     data_fitting = BinaryClassificationFitting(data_handler)
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
     x, y, label = next(data_handler('train'))
 
     loss_info = data_fitting.compute_loss(nn=nn, x=x, y=y, label=label)

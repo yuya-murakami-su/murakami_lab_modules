@@ -3,15 +3,15 @@ import pandas as pd
 import torch.nn
 from pathlib import Path
 from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.optimizer import ConstantLROptimizer
-from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork, AbstractNeuralNetwork
+from murakami_lab_modules.optimizer import Optimizer
+from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork, BaseNeuralNetwork
 from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.regularization import Regularization
 from murakami_lab_modules.input_generator import InputGenerator
 from murakami_lab_modules.plotter import Plotter
 from murakami_lab_modules.callbacks import EarlyStopping, LossMonitor
-from murakami_lab_modules.predictor import NNPredictor
+from murakami_lab_modules.predictor import NeuralNetworkPredictor
 
 
 def main():
@@ -46,9 +46,9 @@ def main():
     # Define data handler for control datasets / データセット制御クラスの定義
     data_handler = DataHandler(
         input_data_path=str(x_path),
-        input_idx=['x1', 'x2'],
+        input_columns=['x1', 'x2'],
         output_data_path=str(y_path),
-        output_idx=['y'],
+        output_columns=['y'],
         batch_size=8,
         device_name='cpu',
         split_type='random_split',
@@ -58,11 +58,11 @@ def main():
     # Define data fitting method during machine learning / データフィッティング手法の定義
     data_fitting = DataFitting(
         data_handler=data_handler,
-        loss_criteria=torch.nn.MSELoss()
+        loss_fn=torch.nn.MSELoss()
     )
 
     # Define optimizer / 最適化アルゴリズムの定義
-    optimizer = ConstantLROptimizer(
+    optimizer = Optimizer(
         algorithm=torch.optim.Adam,
         lr=1e-3
     )
@@ -79,7 +79,7 @@ def main():
 
     # Define range for regularization / 勾配制約計算範囲の定義
     input_generator = InputGenerator(
-        size_of_generated_inputs=100,  # Test random 100 datapoints for regularization for every training epochs
+        n_samples=100,  # Test random 100 datapoints for regularization for every training epochs
         sampling='random',
         input_range=((0, 60), (0, 10)),  # 0 <= x[0] <= 2, 0 <= x[1] <= 10
         device_name='cpu',
@@ -89,10 +89,10 @@ def main():
     # Define regularization / 勾配制約の定義
     regularization = MyRegularization(
         input_generators=[input_generator],  # List of input_generator class
-        reg_weights=[1000, 1000],  # loss = (loss of data fitting) + reg_weights * reg_criteria(loss of regularization)
-        reg_func_name='regularization',
-        reg_criteria=torch.square,
-        reg_min=1e-5
+        weights=[1000, 1000],
+        method_name='regularization',
+        penalty_fn=torch.square,
+        min_value=1e-5
     )
 
     # Define model handler / モデル制御用クラスの設定
@@ -103,7 +103,7 @@ def main():
         regularization=regularization,
         train_epochs=10_000,
         callbacks=(
-            EarlyStopping(monitor='valid', patience=300),
+            EarlyStopping(monitor='validation_loss', patience=300),
             LossMonitor(need_data=True, need_reg=True, every=10),
         )
     )
@@ -112,9 +112,9 @@ def main():
     model_handler()
 
     # Define neural network predictor / ニューラルネットワーク予測モデルの定義
-    predictor = NNPredictor(
+    predictor = NeuralNetworkPredictor(
         model_path=model_handler.model_path,
-        nn_class=FeedForwardNeuralNetwork
+        network_class=FeedForwardNeuralNetwork
     )
 
     # Visualize result / 結果の可視化
@@ -141,7 +141,7 @@ def main():
 
 # Define original regularization class / 独自の勾配制約の定義
 class MyRegularization(Regularization):
-    def regularization(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
+    def regularization(self, data_handler: DataHandler, nn: BaseNeuralNetwork):
         generated_input = self.input_generators[0]()
         y = nn(data_handler.normalize_x(generated_input))
         dy_dx1 = self.grad(y, generated_input, x_idx=1)

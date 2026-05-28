@@ -2,9 +2,9 @@ import pandas as pd
 import torch
 
 from murakami_lab_modules.regularization import (
-    MatchDataLossRegWeight,
+    MatchDataLossRegularizationWeight,
     Regularization,
-    TargetTotalRegWeight,
+    TargetTotalRegularizationWeight,
 )
 
 
@@ -27,14 +27,14 @@ class ConstantRegularization(Regularization):
 def test_target_total_reg_weight_calibrates_to_requested_total():
     regularization = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weight_policy=TargetTotalRegWeight(target_total=10.0),
-        reg_names=['small', 'large'],
+        weight_policy=TargetTotalRegularizationWeight(target_total=10.0),
+        term_names=['small', 'large'],
     )
 
     report = regularization.calibrate_weights(nn=None)
     weighted_terms, total = regularization.get_regularization_value(nn=None)
 
-    assert torch.allclose(regularization.reg_weights, torch.tensor([1.25, 0.3125]))
+    assert torch.allclose(regularization.weights, torch.tensor([1.25, 0.3125]))
     assert torch.allclose(weighted_terms, torch.tensor([5.0, 5.0]))
     assert torch.allclose(total, torch.tensor(10.0))
     assert list(report['name']) == ['small', 'large']
@@ -44,8 +44,8 @@ def test_target_total_reg_weight_calibrates_to_requested_total():
 def test_target_total_reg_weight_supports_relative_factors():
     regularization = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weight_policy=TargetTotalRegWeight(target_total=10.0, factors=[1.0, 3.0]),
-        reg_names=['small', 'large'],
+        weight_policy=TargetTotalRegularizationWeight(target_total=10.0, factors=[1.0, 3.0]),
+        term_names=['small', 'large'],
     )
 
     regularization.calibrate_weights(nn=None)
@@ -58,8 +58,8 @@ def test_target_total_reg_weight_supports_relative_factors():
 def test_match_data_loss_reg_weight_uses_data_loss_times_alpha():
     regularization = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weight_policy=MatchDataLossRegWeight(alpha=2.0),
-        reg_names=['small', 'large'],
+        weight_policy=MatchDataLossRegularizationWeight(alpha=2.0),
+        term_names=['small', 'large'],
     )
 
     report = regularization.calibrate_weights(nn=None, data_loss=3.0)
@@ -73,8 +73,8 @@ def test_match_data_loss_reg_weight_uses_data_loss_times_alpha():
 def test_match_data_loss_reg_weight_can_auto_calibrate_on_first_value_call():
     regularization = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weight_policy=MatchDataLossRegWeight(alpha=2.0),
-        reg_names=['small', 'large'],
+        weight_policy=MatchDataLossRegularizationWeight(alpha=2.0),
+        term_names=['small', 'large'],
     )
 
     weighted_terms, total = regularization.get_regularization_value(nn=None, data_loss=3.0)
@@ -87,8 +87,8 @@ def test_match_data_loss_reg_weight_can_auto_calibrate_on_first_value_call():
 def test_regularization_weight_report_can_be_saved(tmp_path):
     regularization = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weight_policy=TargetTotalRegWeight(target_total=10.0),
-        reg_names=['small', 'large'],
+        weight_policy=TargetTotalRegularizationWeight(target_total=10.0),
+        term_names=['small', 'large'],
     )
     regularization.calibrate_weights(nn=None)
     report_path = tmp_path / 'regularization_weight_report.csv'
@@ -97,14 +97,14 @@ def test_regularization_weight_report_can_be_saved(tmp_path):
 
     report = pd.read_csv(report_path)
     assert list(report['name']) == ['small', 'large']
-    assert list(report['weight_policy']) == ['TargetTotalRegWeight', 'TargetTotalRegWeight']
+    assert list(report['weight_policy']) == ['TargetTotalRegularizationWeight', 'TargetTotalRegularizationWeight']
 
 
 def test_regularization_validation_once_validates_only_first_call():
     regularization = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weights=[1.0, 1.0],
-        reg_names=['small', 'large'],
+        weights=[1.0, 1.0],
+        term_names=['small', 'large'],
         validation='once',
     )
     calls = []
@@ -125,14 +125,14 @@ def test_regularization_validation_once_validates_only_first_call():
 def test_regularization_validation_modes_control_validation_frequency():
     always = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weights=[1.0, 1.0],
-        reg_names=['small', 'large'],
+        weights=[1.0, 1.0],
+        term_names=['small', 'large'],
         validation='always',
     )
     never = ConstantRegularization(
         input_generators=[DummyInputGenerator()],
-        reg_weights=[1.0, 1.0],
-        reg_names=['small', 'large'],
+        weights=[1.0, 1.0],
+        term_names=['small', 'large'],
         validation='never',
     )
     always_calls = []

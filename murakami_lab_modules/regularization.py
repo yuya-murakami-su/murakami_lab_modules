@@ -7,14 +7,14 @@ import torch
 from . import differential, utils
 from .data_handler import DataHandler
 from .input_generator import InputGenerator
-from .neural_network import AbstractNeuralNetwork
+from .neural_network import BaseNeuralNetwork
 
 __all__ = [
     'Regularization',
     'RegularizationWeightPolicy',
-    'StaticRegWeights',
-    'TargetTotalRegWeight',
-    'MatchDataLossRegWeight',
+    'StaticRegularizationWeights',
+    'TargetTotalRegularizationWeight',
+    'MatchDataLossRegularizationWeight',
 ]
 
 logger = utils.get_logger(__name__)
@@ -23,7 +23,7 @@ logger = utils.get_logger(__name__)
 class RegularizationWeightPolicy:
     def initialize(
             self,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             data_loss: float | torch.Tensor = None,
             regularization: 'Regularization' = None
     ) -> torch.Tensor:
@@ -32,7 +32,7 @@ class RegularizationWeightPolicy:
     def update(
             self,
             epoch: int,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             current_weights: torch.Tensor,
             data_loss: float | torch.Tensor = None,
             regularization: 'Regularization' = None
@@ -45,9 +45,9 @@ class RegularizationWeightPolicy:
     @staticmethod
     def _as_tensor(
             value: float | list[float] | tuple[float, ...] | torch.Tensor,
-            raw_reg_mean: torch.Tensor
+            raw_term_means: torch.Tensor
     ) -> torch.Tensor:
-        return torch.as_tensor(value, dtype=raw_reg_mean.dtype, device=raw_reg_mean.device)
+        return torch.as_tensor(value, dtype=raw_term_means.dtype, device=raw_term_means.device)
 
     @staticmethod
     def _scalar_value(value: float | torch.Tensor, name: str) -> float:
@@ -60,13 +60,13 @@ class RegularizationWeightPolicy:
         return float(value)
 
     @staticmethod
-    def _validate_factors(factors: torch.Tensor, raw_reg_mean: torch.Tensor) -> torch.Tensor:
+    def _validate_factors(factors: torch.Tensor, raw_term_means: torch.Tensor) -> torch.Tensor:
         if factors.ndim == 0:
-            factors = factors.expand_as(raw_reg_mean)
-        if factors.shape != raw_reg_mean.shape:
+            factors = factors.expand_as(raw_term_means)
+        if factors.shape != raw_term_means.shape:
             raise ValueError(
-                f'factors must have the same shape as raw_reg_mean. '
-                f'factors.shape={tuple(factors.shape)}, raw_reg_mean.shape={tuple(raw_reg_mean.shape)}.'
+                f'factors must have the same shape as raw_term_means. '
+                f'factors.shape={tuple(factors.shape)}, raw_term_means.shape={tuple(raw_term_means.shape)}.'
             )
         if torch.lt(factors, 0).any():
             raise ValueError('factors must be non-negative.')
@@ -75,21 +75,21 @@ class RegularizationWeightPolicy:
         return factors
 
 
-class StaticRegWeights(RegularizationWeightPolicy):
+class StaticRegularizationWeights(RegularizationWeightPolicy):
     def __init__(self, weights: list[float] | tuple[float, ...] | torch.Tensor):
         self.weights = weights
 
     def initialize(
             self,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             data_loss: float | torch.Tensor = None,
             regularization: 'Regularization' = None
     ) -> torch.Tensor:
-        weights = self._as_tensor(self.weights, raw_reg_mean)
-        if weights.shape != raw_reg_mean.shape:
+        weights = self._as_tensor(self.weights, raw_term_means)
+        if weights.shape != raw_term_means.shape:
             raise ValueError(
-                f'weights must have the same shape as raw_reg_mean. '
-                f'weights.shape={tuple(weights.shape)}, raw_reg_mean.shape={tuple(raw_reg_mean.shape)}.'
+                f'weights must have the same shape as raw_term_means. '
+                f'weights.shape={tuple(weights.shape)}, raw_term_means.shape={tuple(raw_term_means.shape)}.'
             )
         return weights
 
@@ -98,7 +98,7 @@ class StaticRegWeights(RegularizationWeightPolicy):
         return utils.make_object_config(self, {'weights': weights})
 
 
-class TargetTotalRegWeight(RegularizationWeightPolicy):
+class TargetTotalRegularizationWeight(RegularizationWeightPolicy):
     def __init__(
             self,
             target_total: float,
@@ -111,20 +111,20 @@ class TargetTotalRegWeight(RegularizationWeightPolicy):
 
     def initialize(
             self,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             data_loss: float | torch.Tensor = None,
             regularization: 'Regularization' = None
     ) -> torch.Tensor:
-        factors = self._get_factors(raw_reg_mean)
+        factors = self._get_factors(raw_term_means)
         target_terms = float(self.target_total) * factors / factors.sum()
-        return target_terms / raw_reg_mean.detach().clamp_min(self.epsilon)
+        return target_terms / raw_term_means.detach().clamp_min(self.epsilon)
 
-    def _get_factors(self, raw_reg_mean: torch.Tensor) -> torch.Tensor:
+    def _get_factors(self, raw_term_means: torch.Tensor) -> torch.Tensor:
         if self.factors is None:
-            factors = torch.ones_like(raw_reg_mean)
+            factors = torch.ones_like(raw_term_means)
         else:
-            factors = self._as_tensor(self.factors, raw_reg_mean)
-        return self._validate_factors(factors, raw_reg_mean)
+            factors = self._as_tensor(self.factors, raw_term_means)
+        return self._validate_factors(factors, raw_term_means)
 
     def config_dict(self) -> dict[str, object]:
         factors = self.factors.detach().cpu().tolist() if torch.is_tensor(self.factors) else self.factors
@@ -135,7 +135,7 @@ class TargetTotalRegWeight(RegularizationWeightPolicy):
         })
 
 
-class MatchDataLossRegWeight(TargetTotalRegWeight):
+class MatchDataLossRegularizationWeight(TargetTotalRegularizationWeight):
     def __init__(
             self,
             alpha: float,
@@ -147,14 +147,14 @@ class MatchDataLossRegWeight(TargetTotalRegWeight):
 
     def initialize(
             self,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             data_loss: float | torch.Tensor = None,
             regularization: 'Regularization' = None
     ) -> torch.Tensor:
         data_loss_value = self._scalar_value(data_loss, 'data_loss')
         self.target_total = data_loss_value * float(self.alpha)
         return super().initialize(
-            raw_reg_mean=raw_reg_mean,
+            raw_term_means=raw_term_means,
             data_loss=data_loss,
             regularization=regularization
         )
@@ -182,24 +182,24 @@ class Regularization:
     def __init__(
             self,
             input_generators: list[InputGenerator] | tuple[InputGenerator, ...],
-            reg_weights: list[float] = None,
-            reg_weight_policy: RegularizationWeightPolicy = None,
-            reg_func_name: str = 'regularization',
-            reg_names: list[str] = None,
-            reg_criteria: Callable[[torch.Tensor], torch.Tensor] = torch.square,
-            use_reg_prod: bool = False,
-            reg_min: float = None,
+            weights: list[float] = None,
+            weight_policy: RegularizationWeightPolicy = None,
+            method_name: str = 'regularization',
+            term_names: list[str] = None,
+            penalty_fn: Callable[[torch.Tensor], torch.Tensor] = torch.square,
+            combine_by_product: bool = False,
+            min_value: float = None,
             validation: str = 'once'
     ):
         self.locals = utils.get_local_dict(locals())
         self.input_generators = input_generators
-        self.reg_func_name = reg_func_name
-        self.reg_weight_policy = reg_weight_policy
-        self.reg_names = reg_names
-        self.reg_criteria = reg_criteria
-        self.use_reg_prod = use_reg_prod
-        self.reg_min_value = reg_min
-        self.reg_min = reg_min
+        self.method_name = method_name
+        self.weight_policy = weight_policy
+        self.term_names = term_names
+        self.penalty_fn = penalty_fn
+        self.combine_by_product = combine_by_product
+        self.min_value = min_value
+        self.min_values = min_value
         if validation not in self._validation_modes:
             raise ValueError(f'validation must be one of {sorted(self._validation_modes)}. {validation} was given.')
         self.validation = validation
@@ -210,116 +210,116 @@ class Regularization:
         self.device = input_generators[0].device
         self.device_name = input_generators[0].device_name
 
-        if not hasattr(self, f'{reg_func_name}'):
-            raise ValueError(f'{self.__class__.__name__} does not have a method named {reg_func_name}.')
+        if not hasattr(self, f'{method_name}'):
+            raise ValueError(f'{self.__class__.__name__} does not have a method named {method_name}.')
 
-        self.reg_func = getattr(self, f'{reg_func_name}')
+        self.regularization_method = getattr(self, f'{method_name}')
 
-        if reg_weight_policy is None:
-            if reg_weights is None:
-                raise ValueError('Either reg_weights or reg_weight_policy must be given.')
-            self.reg_weight_policy = StaticRegWeights(reg_weights)
-            initial_weights = list(reg_weights)
+        if weight_policy is None:
+            if weights is None:
+                raise ValueError('Either weights or weight_policy must be given.')
+            self.weight_policy = StaticRegularizationWeights(weights)
+            initial_weights = list(weights)
             self.is_weight_calibrated = True
         else:
-            initial_weights = reg_weights
+            initial_weights = weights
             self.is_weight_calibrated = initial_weights is not None
 
         if initial_weights is not None:
-            self.n_reg = len(initial_weights)
-            self.reg_weights = torch.tensor(initial_weights, device=self.device, dtype=torch.float32)
-        elif reg_names is not None:
-            self.n_reg = len(reg_names)
-            self.reg_weights = torch.ones([self.n_reg], device=self.device, dtype=torch.float32)
+            self.n_terms = len(initial_weights)
+            self.weights = torch.tensor(initial_weights, device=self.device, dtype=torch.float32)
+        elif term_names is not None:
+            self.n_terms = len(term_names)
+            self.weights = torch.ones([self.n_terms], device=self.device, dtype=torch.float32)
         else:
-            raise ValueError('reg_names must be given when reg_weights is omitted.')
+            raise ValueError('term_names must be given when weights is omitted.')
 
-        if reg_names is None:
-            self.reg_names = [f'Reg{i}' for i in range(self.n_reg)]
-        elif len(reg_names) != self.n_reg:
-            raise ValueError(f'Inconsistent length of reg_names: '
-                             f'len(_{reg_func_name}()) = {self.n_reg}, len(reg_names) = {len(reg_names)}.')
+        if term_names is None:
+            self.term_names = [f'term_{i}' for i in range(self.n_terms)]
+        elif len(term_names) != self.n_terms:
+            raise ValueError(f'Inconsistent length of term_names: '
+                             f'len({method_name}()) = {self.n_terms}, len(term_names) = {len(term_names)}.')
 
-        if reg_min is None:
-            self.reg_min = torch.zeros([self.n_reg], device=self.device, dtype=torch.float32)
+        if min_value is None:
+            self.min_values = torch.zeros([self.n_terms], device=self.device, dtype=torch.float32)
         else:
-            self.reg_min = torch.full([self.n_reg], reg_min, device=self.device, dtype=torch.float32)
+            self.min_values = torch.full([self.n_terms], min_value, device=self.device, dtype=torch.float32)
 
-        if self.use_reg_prod:
-            self.reg_mean_pow = torch.tensor(1 / self.n_reg, dtype=torch.float, device=self.device)
+        if self.combine_by_product:
+            self.mean_power = torch.tensor(1 / self.n_terms, dtype=torch.float, device=self.device)
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
             'input_generators': [input_generator.config_dict() for input_generator in self.input_generators],
-            'reg_weights': self.reg_weights.detach().cpu().tolist(),
-            'reg_weight_policy': self.reg_weight_policy.config_dict(),
-            'reg_func_name': self.reg_func_name,
-            'reg_names': self.reg_names,
-            'reg_criteria': self.reg_criteria,
-            'use_reg_prod': self.use_reg_prod,
-            'reg_min': self.reg_min_value,
+            'weights': self.weights.detach().cpu().tolist(),
+            'weight_policy': self.weight_policy.config_dict(),
+            'method_name': self.method_name,
+            'term_names': self.term_names,
+            'penalty_fn': self.penalty_fn,
+            'combine_by_product': self.combine_by_product,
+            'min_value': self.min_value,
             'validation': self.validation
         })
 
-    def regularization(self, data_handler: DataHandler, nn: AbstractNeuralNetwork):
+    def regularization(self, data_handler: DataHandler, nn: BaseNeuralNetwork):
         raise NotImplementedError
 
     def _validate_regularization_outputs(self, regs) -> list[torch.Tensor] | tuple[torch.Tensor, ...]:
         if not isinstance(regs, (list, tuple)):
             raise TypeError(
-                f'{self.reg_func_name}() must return list or tuple of torch.Tensor. '
+                f'{self.method_name}() must return list or tuple of torch.Tensor. '
                 f'{type(regs)} was returned.'
             )
-        if len(regs) != self.n_reg:
+        if len(regs) != self.n_terms:
             raise ValueError(
                 f'Inconsistent number of regularization terms: '
-                f'len({self.reg_func_name}()) = {len(regs)}, expected n_reg = {self.n_reg}.'
+                f'len({self.method_name}()) = {len(regs)}, expected n_terms = {self.n_terms}.'
             )
 
         for idx, reg in enumerate(regs):
             if not torch.is_tensor(reg):
                 raise TypeError(
-                    f'{self.reg_func_name}()[{idx}] must be torch.Tensor. {type(reg)} was returned.'
+                    f'{self.method_name}()[{idx}] must be torch.Tensor. {type(reg)} was returned.'
                 )
             if reg.numel() == 0:
-                raise ValueError(f'{self.reg_func_name}()[{idx}] is empty.')
+                raise ValueError(f'{self.method_name}()[{idx}] is empty.')
         n_points = [reg.shape[0] for reg in regs if reg.ndim > 0]
         if len(set(n_points)) > 1 and not self.__class__._different_n_points_warned:
             logger.warning(
                 'Regularization terms have different n_points: %s. '
-                'Each term is averaged independently before applying reg_weights.',
+                'Each term is averaged independently before applying weights.',
                 n_points
             )
             self.__class__._different_n_points_warned = True
         return regs
 
     def _get_regularization_mean(self, regs: list[torch.Tensor] | tuple[torch.Tensor, ...]) -> torch.Tensor:
-        reg_means = []
-        full_regs = []
+        term_means = []
+        penalized_terms = []
         for reg in regs:
-            full_reg = self.reg_criteria(reg)
-            is_finite = torch.isfinite(full_reg)
+            penalized_term = self.penalty_fn(reg)
+            is_finite = torch.isfinite(penalized_term)
             if not is_finite.all():
                 if not is_finite.any():
-                    torch.save(full_regs + [full_reg], 'invalid_regularization.pth')
-                    raise ValueError(f'Too many invalid value was encountered during regularization.')
+                    torch.save(penalized_terms + [penalized_term], 'invalid_regularization.pth')
+                    raise ValueError('Too many invalid values were encountered during regularization.')
                 logger.warning('Invalid value was encountered during regularization.')
-                full_reg = torch.where(is_finite, full_reg, 0.0)
-                reg_mean = full_reg.sum() / is_finite.sum()
+                penalized_term = torch.where(is_finite, penalized_term, 0.0)
+                term_mean = penalized_term.sum() / is_finite.sum()
             else:
-                reg_mean = full_reg.mean()
+                term_mean = penalized_term.mean()
 
-            full_regs.append(full_reg)
-            reg_means.append(reg_mean)
+            penalized_terms.append(penalized_term)
+            term_means.append(term_mean)
 
-        return torch.stack(reg_means)
+        return torch.stack(term_means)
 
-    def get_raw_regularization_mean(
+    def compute_raw_term_means(
             self,
-            nn: AbstractNeuralNetwork,
+            nn: BaseNeuralNetwork,
             data_handler: DataHandler = None
     ) -> torch.Tensor:
-        regs = self.reg_func(data_handler=data_handler, nn=nn)
+        regs = self.regularization_method(data_handler=data_handler, nn=nn)
         if self._should_validate_regularization_outputs():
             regs = self._validate_regularization_outputs(regs)
             self._regularization_outputs_validated = True
@@ -334,62 +334,62 @@ class Regularization:
 
     def combine_regularization_terms(
             self,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             epoch: int = None,
             data_loss: float | torch.Tensor = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if not self.is_weight_calibrated:
-            self.calibrate_weights_from_raw(raw_reg_mean=raw_reg_mean, data_loss=data_loss)
+            self.calibrate_weights_from_raw(raw_term_means=raw_term_means, data_loss=data_loss)
         elif epoch is not None:
-            self.reg_weights = self.reg_weight_policy.update(
+            self.weights = self.weight_policy.update(
                 epoch=epoch,
-                raw_reg_mean=raw_reg_mean.detach(),
-                current_weights=self.reg_weights,
+                raw_term_means=raw_term_means.detach(),
+                current_weights=self.weights,
                 data_loss=data_loss,
                 regularization=self
             ).to(device=self.device, dtype=torch.float32)
 
-        if self.use_reg_prod:
-            weighted_terms = (raw_reg_mean + self.reg_min).pow(self.reg_weights)
-            reg_value = weighted_terms.prod()
+        if self.combine_by_product:
+            weighted_terms = (raw_term_means + self.min_values).pow(self.weights)
+            regularization_loss = weighted_terms.prod()
         else:
-            weighted_terms = raw_reg_mean * self.reg_weights + self.reg_min
-            reg_value = weighted_terms.sum()
+            weighted_terms = raw_term_means * self.weights + self.min_values
+            regularization_loss = weighted_terms.sum()
 
-        return weighted_terms, reg_value
+        return weighted_terms, regularization_loss
 
     def calibrate_weights(
             self,
-            nn: AbstractNeuralNetwork,
+            nn: BaseNeuralNetwork,
             data_handler: DataHandler = None,
             data_loss: float | torch.Tensor = None
     ) -> pd.DataFrame:
-        raw_reg_mean = self.get_raw_regularization_mean(nn=nn, data_handler=data_handler)
-        return self.calibrate_weights_from_raw(raw_reg_mean=raw_reg_mean, data_loss=data_loss)
+        raw_term_means = self.compute_raw_term_means(nn=nn, data_handler=data_handler)
+        return self.calibrate_weights_from_raw(raw_term_means=raw_term_means, data_loss=data_loss)
 
     def calibrate_weights_from_raw(
             self,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             data_loss: float | torch.Tensor = None
     ) -> pd.DataFrame:
-        if self.use_reg_prod and not isinstance(self.reg_weight_policy, StaticRegWeights):
-            raise ValueError('Automatic regularization weight calibration is not supported with use_reg_prod=True.')
+        if self.combine_by_product and not isinstance(self.weight_policy, StaticRegularizationWeights):
+            raise ValueError('Automatic regularization weight calibration is not supported with combine_by_product=True.')
 
-        new_weights = self.reg_weight_policy.initialize(
-            raw_reg_mean=raw_reg_mean.detach(),
+        new_weights = self.weight_policy.initialize(
+            raw_term_means=raw_term_means.detach(),
             data_loss=data_loss,
             regularization=self
         ).to(device=self.device, dtype=torch.float32)
-        if new_weights.shape != self.reg_weights.shape:
+        if new_weights.shape != self.weights.shape:
             raise ValueError(
                 f'Calibrated weights shape mismatch: '
-                f'{tuple(new_weights.shape)} != {tuple(self.reg_weights.shape)}.'
+                f'{tuple(new_weights.shape)} != {tuple(self.weights.shape)}.'
             )
-        self.reg_weights = new_weights
+        self.weights = new_weights
         self.is_weight_calibrated = True
-        weighted_terms, total = self.combine_regularization_terms(raw_reg_mean=raw_reg_mean.detach())
+        weighted_terms, total = self.combine_regularization_terms(raw_term_means=raw_term_means.detach())
         self.weight_report = self._make_weight_report(
-            raw_reg_mean=raw_reg_mean.detach(),
+            raw_term_means=raw_term_means.detach(),
             weighted_terms=weighted_terms.detach(),
             total=total.detach() if torch.is_tensor(total) else total,
             data_loss=data_loss
@@ -398,7 +398,7 @@ class Regularization:
 
     def _make_weight_report(
             self,
-            raw_reg_mean: torch.Tensor,
+            raw_term_means: torch.Tensor,
             weighted_terms: torch.Tensor,
             total: torch.Tensor | float,
             data_loss: float | torch.Tensor = None
@@ -408,21 +408,21 @@ class Regularization:
             data_loss_value = RegularizationWeightPolicy._scalar_value(data_loss, 'data_loss')
         total_value = float(total.detach().cpu().item()) if torch.is_tensor(total) else float(total)
         return pd.DataFrame({
-            'name': self.reg_names,
-            'raw_mean': raw_reg_mean.detach().cpu().tolist(),
-            'weight': self.reg_weights.detach().cpu().tolist(),
+            'name': self.term_names,
+            'raw_mean': raw_term_means.detach().cpu().tolist(),
+            'weight': self.weights.detach().cpu().tolist(),
             'weighted_mean': weighted_terms.detach().cpu().tolist(),
-            'total_regularization': [total_value] * self.n_reg,
-            'data_loss': [data_loss_value] * self.n_reg,
-            'weight_policy': [self.reg_weight_policy.__class__.__name__] * self.n_reg,
+            'total_regularization': [total_value] * self.n_terms,
+            'data_loss': [data_loss_value] * self.n_terms,
+            'weight_policy': [self.weight_policy.__class__.__name__] * self.n_terms,
         })
 
     def weight_summary_df(self) -> pd.DataFrame:
         if self.weight_report is None:
             return pd.DataFrame({
-                'name': self.reg_names,
-                'weight': self.reg_weights.detach().cpu().tolist(),
-                'weight_policy': [self.reg_weight_policy.__class__.__name__] * self.n_reg,
+                'name': self.term_names,
+                'weight': self.weights.detach().cpu().tolist(),
+                'weight_policy': [self.weight_policy.__class__.__name__] * self.n_terms,
             })
         return self.weight_report.copy()
 
@@ -431,14 +431,14 @@ class Regularization:
 
     def get_regularization_value(
             self,
-            nn: AbstractNeuralNetwork,
+            nn: BaseNeuralNetwork,
             data_handler: DataHandler = None,
             epoch: int = None,
             data_loss: float | torch.Tensor = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        raw_reg_mean = self.get_raw_regularization_mean(nn=nn, data_handler=data_handler)
+        raw_term_means = self.compute_raw_term_means(nn=nn, data_handler=data_handler)
         return self.combine_regularization_terms(
-            raw_reg_mean=raw_reg_mean,
+            raw_term_means=raw_term_means,
             epoch=epoch,
             data_loss=data_loss
         )

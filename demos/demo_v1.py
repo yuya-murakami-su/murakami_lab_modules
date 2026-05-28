@@ -3,13 +3,13 @@ import pandas as pd
 import torch.nn
 from pathlib import Path
 from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.optimizer import ConstantLROptimizer
+from murakami_lab_modules.optimizer import Optimizer
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
 from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.plotter import Plotter
 from murakami_lab_modules.callbacks import EarlyStopping, LossMonitor
-from murakami_lab_modules.predictor import NNPredictor
+from murakami_lab_modules.predictor import NeuralNetworkPredictor
 
 
 def main():
@@ -44,9 +44,9 @@ def main():
     # Define data handler for control datasets / データセット制御クラスの定義
     data_handler = DataHandler(
         input_data_path=str(x_path),
-        input_idx=['x1', 'x2'],
+        input_columns=['x1', 'x2'],
         output_data_path=str(y_path),
-        output_idx=['y'],
+        output_columns=['y'],
         batch_size=8,
         device_name='cpu',
         split_type='random_split',
@@ -56,11 +56,11 @@ def main():
     # Define data fitting method during machine learning / データフィッティング手法の定義
     data_fitting = DataFitting(
         data_handler=data_handler,
-        loss_criteria=torch.nn.MSELoss()
+        loss_fn=torch.nn.MSELoss()
     )
 
     # Define optimizer / 最適化アルゴリズムの定義
-    optimizer = ConstantLROptimizer(
+    optimizer = Optimizer(
         algorithm=torch.optim.Adam,
         lr=1e-3
     )
@@ -82,7 +82,7 @@ def main():
         data_fitting=data_fitting,
         train_epochs=10_000,
         callbacks=(
-            EarlyStopping(monitor='valid', patience=300),
+            EarlyStopping(monitor='validation_loss', patience=300),
             LossMonitor(need_data=True, need_reg=True, every=10),
         )
     )
@@ -91,9 +91,9 @@ def main():
     model_handler()
 
     # Define neural network predictor / ニューラルネットワーク予測モデルの定義
-    predictor = NNPredictor(
+    predictor = NeuralNetworkPredictor(
         model_path=model_handler.model_path,
-        nn_class=FeedForwardNeuralNetwork
+        network_class=FeedForwardNeuralNetwork
     )
 
     # Visualize result / 結果の可視化

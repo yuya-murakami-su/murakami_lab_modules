@@ -119,25 +119,25 @@ def is_floating_dtype(dtype: torch.dtype) -> bool:
     return torch.empty((), dtype=dtype).is_floating_point()
 
 
-_device_alart = True
+_device_alert = True
 def get_device(device_name: str) -> torch.device:
-    global _device_alart
+    global _device_alert
     if 'cuda' in device_name:
         if torch.cuda.is_available():
             device = torch.device(device_name)
-            if _device_alart:
+            if _device_alert:
                 logger.info('CUDA was found.')
-                _device_alart = False
+                _device_alert = False
         else:
             device = torch.device('cpu')
-            if _device_alart:
+            if _device_alert:
                 logger.warning('CUDA was not found. CPU will be used.')
-                _device_alart = False
+                _device_alert = False
     else:
         device = torch.device('cpu')
-        if _device_alart:
+        if _device_alert:
             logger.info('CPU will be used.')
-            _device_alart = False
+            _device_alert = False
     return device
 
 

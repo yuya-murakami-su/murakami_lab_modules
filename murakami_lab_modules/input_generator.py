@@ -11,7 +11,7 @@ __all__ = ['InputGenerator']
 class InputGenerator:
     def __init__(
             self,
-            size_of_generated_inputs: int,
+            n_samples: int,
             input_range: tuple[tuple[float, float], ...] = None,
             device_name: str = 'cpu',
             sampling: str = 'random',
@@ -28,7 +28,7 @@ class InputGenerator:
     ):
         self.locals = utils.get_local_dict(locals())
 
-        self.size_of_generated_inputs = size_of_generated_inputs
+        self.n_samples = n_samples
         self.input_range = input_range
         self.device_name = device_name
         self.device = utils.get_device(device_name)
@@ -51,7 +51,7 @@ class InputGenerator:
 
         if self.sampling == 'fixed':
             self._fixed_inputs = self._prepare_fixed_inputs(inputs)
-            self.n_input = self._fixed_inputs.shape[1]
+            self.input_dim = self._fixed_inputs.shape[1]
             self._sobol_engine = None
         else:
             self._prepare_range()
@@ -59,7 +59,7 @@ class InputGenerator:
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
-            'size_of_generated_inputs': self.size_of_generated_inputs,
+            'n_samples': self.n_samples,
             'input_range': self.input_range,
             'device_name': self.device_name,
             'sampling': self.sampling,
@@ -76,8 +76,8 @@ class InputGenerator:
         })
 
     def _validate_common_settings(self) -> None:
-        if type(self.size_of_generated_inputs) is not int or self.size_of_generated_inputs <= 0:
-            raise ValueError('size_of_generated_inputs must be a positive int.')
+        if type(self.n_samples) is not int or self.n_samples <= 0:
+            raise ValueError('n_samples must be a positive int.')
         if self.sampling not in {'random', 'sobol', 'fixed'}:
             raise ValueError("sampling must be one of 'random', 'sobol', or 'fixed'.")
         if type(self.oversample_factor) is not int or self.oversample_factor < 1:
@@ -92,12 +92,12 @@ class InputGenerator:
     def _prepare_range(self) -> None:
         input_range = torch.tensor(self.input_range, dtype=torch.float32)
         if input_range.ndim != 2 or input_range.shape[1] != 2:
-            raise ValueError('input_range must be a tuple/list with shape (n_input, 2).')
+            raise ValueError('input_range must be a tuple/list with shape (input_dim, 2).')
         if torch.le(input_range[:, 1], input_range[:, 0]).any():
             raise ValueError('Each upper bound in input_range must be larger than the lower bound.')
 
-        self.n_input = input_range.shape[0]
-        scales = self._normalize_scale(self.scale, self.n_input)
+        self.input_dim = input_range.shape[0]
+        scales = self._normalize_scale(self.scale, self.input_dim)
         self.scales = scales
         log_mask = torch.tensor([scale == 'log' for scale in scales], dtype=torch.bool)
         if log_mask.any() and torch.le(input_range[log_mask] + self.log_epsilon, 0).any():
@@ -110,16 +110,16 @@ class InputGenerator:
         self._d_range = (transformed_range[:, 1] - transformed_range[:, 0]).view(1, -1).to(self.device)
 
     @staticmethod
-    def _normalize_scale(scale: str | tuple[str, ...] | list[str], n_input: int) -> tuple[str, ...]:
+    def _normalize_scale(scale: str | tuple[str, ...] | list[str], input_dim: int) -> tuple[str, ...]:
         if isinstance(scale, str):
-            scales = (scale,) * n_input
+            scales = (scale,) * input_dim
         elif isinstance(scale, (tuple, list)):
             scales = tuple(scale)
         else:
             raise TypeError(f'scale must be str, tuple[str, ...], or list[str]. {type(scale)} was given.')
 
-        if len(scales) != n_input:
-            raise ValueError(f'len(scale) must be {n_input}. {len(scales)} was given.')
+        if len(scales) != input_dim:
+            raise ValueError(f'len(scale) must be {input_dim}. {len(scales)} was given.')
         for scale_ in scales:
             if scale_ not in {'linear', 'log'}:
                 raise ValueError("scale must contain only 'linear' or 'log'.")
@@ -129,7 +129,7 @@ class InputGenerator:
         if self.sampling != 'sobol':
             return None
         return SobolEngine(
-            dimension=self.n_input,
+            dimension=self.input_dim,
             scramble=self.scramble,
             seed=self.random_seed,
         )
@@ -140,17 +140,17 @@ class InputGenerator:
             fixed_inputs = fixed_inputs.reshape(-1, 1)
         if fixed_inputs.ndim != 2:
             raise ValueError(f'inputs must be 1D or 2D. inputs.shape={tuple(fixed_inputs.shape)}.')
-        if fixed_inputs.shape[0] != self.size_of_generated_inputs:
+        if fixed_inputs.shape[0] != self.n_samples:
             raise ValueError(
-                f'len(inputs) must be equal to size_of_generated_inputs. '
-                f'{fixed_inputs.shape[0]} != {self.size_of_generated_inputs}.'
+                f'len(inputs) must be equal to n_samples. '
+                f'{fixed_inputs.shape[0]} != {self.n_samples}.'
             )
         return fixed_inputs.detach()
 
     def _draw_unit(self, n_samples: int) -> torch.Tensor:
         if self.sampling == 'random':
             unit = torch.rand(
-                [n_samples, self.n_input],
+                [n_samples, self.input_dim],
                 dtype=torch.float32,
                 generator=self._random_generator,
                 device=self.device
@@ -192,24 +192,24 @@ class InputGenerator:
 
     def _build_sampled_inputs(self) -> torch.Tensor:
         if self.filter_func is None:
-            return self._sample_candidates(self.size_of_generated_inputs).detach()
+            return self._sample_candidates(self.n_samples).detach()
 
         accepted = []
         n_accepted = 0
         for attempt in range(1, self.max_attempts + 1):
-            n_remaining = self.size_of_generated_inputs - n_accepted
+            n_remaining = self.n_samples - n_accepted
             n_candidates = max(n_remaining * self.oversample_factor, n_remaining)
             candidates = self._sample_candidates(n_candidates)
             filtered = self._apply_filter(candidates).detach()
             if filtered.numel() > 0:
                 accepted.append(filtered)
                 n_accepted += filtered.shape[0]
-            if n_accepted >= self.size_of_generated_inputs:
-                return torch.vstack(accepted)[:self.size_of_generated_inputs].detach()
+            if n_accepted >= self.n_samples:
+                return torch.vstack(accepted)[:self.n_samples].detach()
 
         raise RuntimeError(
             f'InputGenerator failed to collect enough samples after {self.max_attempts} attempts. '
-            f'accepted={n_accepted}, required={self.size_of_generated_inputs}, '
+            f'accepted={n_accepted}, required={self.n_samples}, '
             f'oversample_factor={self.oversample_factor}.'
         )
 

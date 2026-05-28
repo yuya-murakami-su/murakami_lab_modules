@@ -3,8 +3,8 @@ import pandas as pd
 import numpy as np
 import torch
 from pathlib import Path
-from .neural_network import AbstractNeuralNetwork
-from .optimizer import OptimizerBase
+from .neural_network import BaseNeuralNetwork
+from .optimizer import Optimizer
 from .data_fitting import DataFitting as _DataFitting
 from .regularization import Regularization as _Regularization
 from .experiment import RunManager
@@ -16,8 +16,8 @@ __all__ = ['ModelHandler']
 class ModelHandler:
     def __init__(
             self,
-            nn: AbstractNeuralNetwork,
-            optimizer: OptimizerBase,
+            nn: BaseNeuralNetwork,
+            optimizer: Optimizer,
             data_fitting: _DataFitting = None,
             regularization: _Regularization = None,
             train_epochs: int = None,
@@ -25,7 +25,7 @@ class ModelHandler:
             load_optimizer: bool = False,
             save_path: str = 'Model',
             summary_path: str = 'run_summary',
-            recalculate_valid_loss: bool = True,
+            recompute_validation_loss: bool = True,
             model_name: str = None,
             callbacks: tuple[object, ...] = None,
             random_seed: int = 2025,
@@ -57,7 +57,7 @@ class ModelHandler:
 
         self.save_path = Path(save_path)
         self.summary_path = Path(summary_path)
-        self.recalculate_valid_loss = recalculate_valid_loss
+        self.recompute_validation_loss = recompute_validation_loss
         self.run_manager = RunManager(save_path=save_path, model_name=model_name)
         self.model_name = self.run_manager.model_name
         self.original_model_name = self.run_manager.original_model_name
@@ -86,7 +86,7 @@ class ModelHandler:
             self.model_path = None
         self._prepare_callbacks()
         self._set_model()
-        self._prepare_train_valuables()
+        self._prepare_training_state()
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
@@ -95,7 +95,7 @@ class ModelHandler:
             'load_optimizer': self.load_optimizer,
             'save_path': self.save_path,
             'summary_path': self.summary_path,
-            'recalculate_valid_loss': self.recalculate_valid_loss,
+            'recompute_validation_loss': self.recompute_validation_loss,
             'model_name': self.model_name,
             'callbacks': self.callbacks,
             'random_seed': self.random_seed,
@@ -114,7 +114,7 @@ class ModelHandler:
 
     def _validate_inputs(self):
         if self.data_fitting is None and self.regularization is None:
-            raise ValueError('At least one of data_handler_ or input_generators must be given.')
+            raise ValueError('At least one of data_fitting or regularization must be given.')
 
         if self.regularization is None:
             self.device = self.data_fitting.data_handler.device
@@ -145,7 +145,7 @@ class ModelHandler:
         from .callbacks import (
             BestModelTracker,
             ConsoleLogger,
-            FinalStateDictSaver,
+            FinalCheckpointSaver,
             HistoryLogger,
             HistoryRecorder,
             RegularizationReportSaver,
@@ -174,7 +174,7 @@ class ModelHandler:
                     keep_last=self.keep_last_history,
                 ))
             if self.save_model:
-                core_callbacks.append(FinalStateDictSaver())
+                core_callbacks.append(FinalCheckpointSaver())
             if self.has_reg:
                 core_callbacks.append(RegularizationReportSaver())
             core_callbacks.append(RunSummaryLogger(
@@ -192,7 +192,7 @@ class ModelHandler:
         if self.load_model is not None:
             self._load_state_dicts(from_outside=True, load_optimizer=self.load_optimizer)
 
-    def _prepare_train_valuables(self):
+    def _prepare_training_state(self):
         self.epoch = 0
         self.best_loss = None
         self.best_epoch = None
@@ -207,7 +207,7 @@ class ModelHandler:
         self.evolution_col = ['epoch']
 
         if self.has_data:
-            self.evolution_col += ['train', 'valid']
+            self.evolution_col += ['train_loss', 'validation_loss']
             self.has_valid = self.data_fitting.data_handler.n_data['valid'] > 0
             self.has_test = self.data_fitting.data_handler.n_data['test'] > 0
         else:
@@ -215,20 +215,20 @@ class ModelHandler:
             self.has_test = False
 
         if self.has_reg:
-            self.evolution_col += ['reg_total'] + self.regularization.reg_names
+            self.evolution_col += ['regularization_loss'] + self.regularization.term_names
 
         if self.data_fitting is not None and self.regularization is not None:
             self.evolution_col = (
-                    ['epoch', 'train', 'train_data', 'train_reg'] +
-                    ['train_' + r for r in self.regularization.reg_names] +
-                    ['valid', 'valid_data', 'valid_reg'] +
-                    ['valid_' + r for r in self.regularization.reg_names]
+                    ['epoch', 'train_loss', 'train_data_loss', 'train_regularization_loss'] +
+                    ['train_' + r for r in self.regularization.term_names] +
+                    ['validation_loss', 'validation_data_loss', 'validation_regularization_loss'] +
+                    ['validation_' + r for r in self.regularization.term_names]
             )
 
         self.evolution = []
         self.current_evolution = None
         self.current_train_losses = None
-        self.current_valid_losses = None
+        self.current_validation_losses = None
 
     def _should_run_callback(self, cb, method: str, interval: bool) -> bool:
         if not interval:
@@ -258,18 +258,18 @@ class ModelHandler:
 
             if self.data_fitting is not None:
                 if self.has_valid:
-                    valid_losses = self._get_loss('valid')
+                    validation_losses = self._get_loss('valid')
                 else:
-                    if self.recalculate_valid_loss:
-                        valid_losses = self._get_loss('train_valid')
+                    if self.recompute_validation_loss:
+                        validation_losses = self._get_loss('train_valid')
                     else:
-                        valid_losses = train_losses
+                        validation_losses = train_losses
             else:
-                valid_losses = train_losses
-            self.current_valid_losses = valid_losses
+                validation_losses = train_losses
+            self.current_validation_losses = validation_losses
             self._run_callbacks('on_validation_end', interval=True)
 
-            self._update_evolution(train_losses, valid_losses)
+            self._update_evolution(train_losses, validation_losses)
             self._finish_epoch()
             self._run_callbacks('on_epoch_end', interval=True)
 
@@ -289,7 +289,7 @@ class ModelHandler:
 
         if self.has_data:
             if self.has_reg:
-                return self._collect_data_reg_losses(phase)
+                return self._collect_data_regularization_losses(phase)
             else:
                 return self._collect_data_losses(phase)
         else:
@@ -333,10 +333,10 @@ class ModelHandler:
             'data': self._to_float(data_sum / n_data)
         }
 
-    def _collect_data_reg_losses(self, phase: str) -> dict[str, object]:
+    def _collect_data_regularization_losses(self, phase: str) -> dict[str, object]:
         total_sum = None
         data_sum = None
-        reg_sum = None
+        regularization_sum = None
         term_sum = None
         n_data = 0
         n_batch = 0
@@ -345,7 +345,7 @@ class ModelHandler:
             batch_size = len(x)
             total_sum = self._add_weighted_loss(total_sum, loss['total'], batch_size)
             data_sum = self._add_weighted_loss(data_sum, loss['data'], batch_size)
-            reg_sum = self._add_loss(reg_sum, loss['reg'])
+            regularization_sum = self._add_loss(regularization_sum, loss['regularization'])
             term_sum = self._add_loss(term_sum, loss['terms'])
             n_data += batch_size
             n_batch += 1
@@ -356,7 +356,7 @@ class ModelHandler:
         return {
             'total': self._to_float(total_sum / n_data),
             'data': self._to_float(data_sum / n_data),
-            'reg': self._to_float(reg_sum / n_batch),
+            'regularization': self._to_float(regularization_sum / n_batch),
             'terms': self._regularization_terms_to_dict(terms)
         }
 
@@ -372,24 +372,24 @@ class ModelHandler:
                 epoch=self.epoch
             )
 
-            reg_mean, reg_loss = self.regularization.get_regularization_value(
+            term_means, regularization_loss = self.regularization.get_regularization_value(
                 nn=self.nn,
                 data_handler=self.data_fitting.data_handler,
                 epoch=self.epoch,
                 data_loss=data_loss_info['total'].detach()
             )
-            if self.regularization.use_reg_prod:
-                loss = data_loss_info['total'] * reg_loss
+            if self.regularization.combine_by_product:
+                loss = data_loss_info['total'] * regularization_loss
             else:
-                loss = data_loss_info['total'] + reg_loss
+                loss = data_loss_info['total'] + regularization_loss
 
             loss.backward()
             self.optimizer.step(self.epoch)
             return {
                 'total': loss.detach(),
                 'data': data_loss_info['total'].detach(),
-                'reg': reg_loss.detach(),
-                'terms': reg_mean.detach()
+                'regularization': regularization_loss.detach(),
+                'terms': term_means.detach()
             }
 
         else:
@@ -404,21 +404,21 @@ class ModelHandler:
                 )
                 data_loss = data_loss_info['total'].detach()
 
-            reg_mean, reg_loss = self.regularization.get_regularization_value(
+            term_means, regularization_loss = self.regularization.get_regularization_value(
                 nn=self.nn,
                 data_handler=self.data_fitting.data_handler,
                 epoch=self.epoch,
                 data_loss=data_loss
             )
-            if self.regularization.use_reg_prod:
-                loss = data_loss * reg_loss
+            if self.regularization.combine_by_product:
+                loss = data_loss * regularization_loss
             else:
-                loss = data_loss + reg_loss
+                loss = data_loss + regularization_loss
             return {
                 'total': loss.detach(),
                 'data': data_loss,
-                'reg': reg_loss.detach(),
-                'terms': reg_mean.detach()
+                'regularization': regularization_loss.detach(),
+                'terms': term_means.detach()
             }
 
     def _data_step(self, x: torch.Tensor, y: torch.Tensor, label, phase: str):
@@ -457,20 +457,20 @@ class ModelHandler:
 
     def _reg_step(self):
         self.optimizer.zero_grad()
-        reg_mean, loss = self.regularization.get_regularization_value(nn=self.nn, epoch=self.epoch)
+        term_means, loss = self.regularization.get_regularization_value(nn=self.nn, epoch=self.epoch)
         loss.backward()
         self.optimizer.step(self.epoch)
         return {
             'total': self._to_float(loss),
-            'terms': self._regularization_terms_to_dict(reg_mean)
+            'terms': self._regularization_terms_to_dict(term_means)
         }
 
-    def _regularization_terms_to_dict(self, reg_mean) -> dict[str, float]:
-        if torch.is_tensor(reg_mean):
-            reg_mean = reg_mean.detach().cpu()
+    def _regularization_terms_to_dict(self, term_means) -> dict[str, float]:
+        if torch.is_tensor(term_means):
+            term_means = term_means.detach().cpu()
         return {
             name: self._to_float(value)
-            for name, value in zip(self.regularization.reg_names, reg_mean)
+            for name, value in zip(self.regularization.term_names, term_means)
         }
 
     def _update_evolution(self, train: dict[str, object], valid: dict[str, object]) -> None:
@@ -478,21 +478,21 @@ class ModelHandler:
         if self.has_data:
             if self.has_reg:
                 record.update({
-                    'train': train['total'],
-                    'train_data': train['data'],
-                    'train_reg': train['reg'],
-                    'valid': valid['total'],
-                    'valid_data': valid['data'],
-                    'valid_reg': valid['reg']
+                    'train_loss': train['total'],
+                    'train_data_loss': train['data'],
+                    'train_regularization_loss': train['regularization'],
+                    'validation_loss': valid['total'],
+                    'validation_data_loss': valid['data'],
+                    'validation_regularization_loss': valid['regularization']
                 })
-                for name in self.regularization.reg_names:
+                for name in self.regularization.term_names:
                     record[f'train_{name}'] = train['terms'][name]
-                    record[f'valid_{name}'] = valid['terms'][name]
+                    record[f'validation_{name}'] = valid['terms'][name]
             else:
-                record.update({'train': train['total'], 'valid': valid['total']})
+                record.update({'train_loss': train['total'], 'validation_loss': valid['total']})
         else:
-            record['reg_total'] = train['total']
-            for name in self.regularization.reg_names:
+            record['regularization_loss'] = train['total']
+            for name in self.regularization.term_names:
                 record[name] = train['terms'][name]
         self.current_evolution = record
 
@@ -518,7 +518,7 @@ class ModelHandler:
         if load_optimizer:
             self.optimizer.load_state_dict(state_dicts['optimizer_state_dict'])
 
-    def get_loss_info_fnc(self, need_data: bool = True, need_reg: bool = True):
+    def get_loss_series(self, need_data: bool = True, need_reg: bool = True):
         def get_xy_from_keys(evolution: list[dict], keys: list[str], labels: list[str]):
             if len(evolution) == 0:
                 return np.empty([0]), [np.empty([0]) for _ in keys], labels
@@ -530,46 +530,47 @@ class ModelHandler:
         if self.has_data:
             if self.has_reg:
                 if need_data and need_reg:
-                    n_data = 4 + self.regularization.n_reg
+                    n_data = 4 + self.regularization.n_terms
                     keys = (
-                            ['train_data', 'valid', 'valid_data', 'valid_reg'] +
-                            ['valid_' + r for r in self.regularization.reg_names]
+                            ['train_data_loss', 'validation_loss', 'validation_data_loss',
+                             'validation_regularization_loss'] +
+                            ['validation_' + r for r in self.regularization.term_names]
                     )
-                    labels = (['Train (data)', 'Valid (total)', 'Valid (data)', 'Valid (reg)'] +
-                              self.regularization.reg_names)
+                    labels = (['Train (data)', 'Validation (total)', 'Validation (data)', 'Validation (regularization)'] +
+                              self.regularization.term_names)
 
                     def get_xy(evolution: list[dict], _: int):
                         return get_xy_from_keys(evolution, keys, labels)
 
                 elif need_data:
                     n_data = 2
-                    keys = ['train_data', 'valid_data']
-                    labels = ['Train (data)', 'Valid (data)']
+                    keys = ['train_data_loss', 'validation_data_loss']
+                    labels = ['Train (data)', 'Validation (data)']
 
                     def get_xy(evolution: list[dict], _: int):
                         return get_xy_from_keys(evolution, keys, labels)
 
                 elif need_reg:
-                    n_data = self.regularization.n_reg
-                    keys = ['valid_' + r for r in self.regularization.reg_names]
-                    labels = self.regularization.reg_names
+                    n_data = self.regularization.n_terms
+                    keys = ['validation_' + r for r in self.regularization.term_names]
+                    labels = self.regularization.term_names
 
                     def get_xy(evolution: list[dict], _: int):
                         return get_xy_from_keys(evolution, keys, labels)
 
                 else:
-                    raise ValueError('At least one of need_loss or need_reg must be True.')
+                    raise ValueError('At least one of need_data or need_reg must be True.')
             else:
                 n_data = 2
-                keys = ['train', 'valid']
-                labels = ['Train', 'Valid']
+                keys = ['train_loss', 'validation_loss']
+                labels = ['Train', 'Validation']
 
                 def get_xy(evolution: list[dict], _: int):
                     return get_xy_from_keys(evolution, keys, labels)
         else:
-            n_data = 1 + self.regularization.n_reg
-            keys = ['reg_total'] + self.regularization.reg_names
-            labels = ['Reg (all)'] + self.regularization.reg_names
+            n_data = 1 + self.regularization.n_terms
+            keys = ['regularization_loss'] + self.regularization.term_names
+            labels = ['Reg (all)'] + self.regularization.term_names
 
             def get_xy(evolution: list[dict], _: int):
                 return get_xy_from_keys(evolution, keys, labels)

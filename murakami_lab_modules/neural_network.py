@@ -4,13 +4,13 @@ from collections.abc import Callable
 from . import utils
 
 
-class AbstractNeuralNetwork(torch.nn.Module):
+class BaseNeuralNetwork(torch.nn.Module):
     def __init__(
             self,
-            n_input: int = 1,
-            n_output: int = 1,
-            n_layer: int = 2,
-            n_node: int = 100,
+            input_dim: int = 1,
+            output_dim: int = 1,
+            n_hidden_layers: int = 2,
+            hidden_dim: int = 100,
             activation: Callable[[torch.Tensor], torch.Tensor] = torch.nn.Tanh(),
             dropout: float = 0.0,
             batch_norm: bool = False,
@@ -21,10 +21,10 @@ class AbstractNeuralNetwork(torch.nn.Module):
         utils.initialize_random_seed(random_seed)
         super().__init__()
 
-        self.n_input = n_input
-        self.n_output = n_output
-        self.n_layer = n_layer
-        self.n_node = n_node
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.n_hidden_layers = n_hidden_layers
+        self.hidden_dim = hidden_dim
         self.activation = activation
         self.dropout = dropout
         self.batch_norm = batch_norm
@@ -35,10 +35,10 @@ class AbstractNeuralNetwork(torch.nn.Module):
 
     def config_dict(self) -> dict[str, object]:
         return utils.make_object_config(self, {
-            'n_input': self.n_input,
-            'n_output': self.n_output,
-            'n_layer': self.n_layer,
-            'n_node': self.n_node,
+            'input_dim': self.input_dim,
+            'output_dim': self.output_dim,
+            'n_hidden_layers': self.n_hidden_layers,
+            'hidden_dim': self.hidden_dim,
             'activation': self.activation,
             'dropout': self.dropout,
             'batch_norm': self.batch_norm,
@@ -46,7 +46,7 @@ class AbstractNeuralNetwork(torch.nn.Module):
             **self.kwargs
         })
 
-    @ staticmethod
+    @staticmethod
     def _copy_activation(activation: Callable[[torch.Tensor], torch.Tensor]):
         if isinstance(activation, torch.nn.Module):
             return copy.deepcopy(activation)
@@ -54,27 +54,27 @@ class AbstractNeuralNetwork(torch.nn.Module):
 
     @staticmethod
     def _hidden_block(
-            n_input: int,
-            n_output: int,
+            input_dim: int,
+            output_dim: int,
             activation: Callable[[torch.Tensor], torch.Tensor],
             dropout: float,
             batch_norm: bool
     ) -> list[torch.nn.Module]:
-        modules = [torch.nn.Linear(n_input, n_output)]
+        modules = [torch.nn.Linear(input_dim, output_dim)]
         if batch_norm:
-            modules.append(torch.nn.BatchNorm1d(n_output))
+            modules.append(torch.nn.BatchNorm1d(output_dim))
         if activation is not None:
-            modules.append(AbstractNeuralNetwork._copy_activation(activation))
+            modules.append(BaseNeuralNetwork._copy_activation(activation))
         if dropout > 0.0:
             modules.append(torch.nn.Dropout(p=dropout))
         return modules
 
     @staticmethod
     def get_neural_network_model(
-            n_input: int,
-            n_output: int,
-            n_layer: int,
-            n_node: int,
+            input_dim: int,
+            output_dim: int,
+            n_hidden_layers: int,
+            hidden_dim: int,
             activation: Callable[[torch.Tensor], torch.Tensor],
             dropout: float = 0.0,
             batch_norm: bool = False,
@@ -82,39 +82,39 @@ class AbstractNeuralNetwork(torch.nn.Module):
     ) -> torch.nn.Sequential:
         if not 0.0 <= dropout < 1.0:
             raise ValueError('dropout must satisfy 0.0 <= dropout < 1.0.')
-        if n_layer == 0:
-            modules = [torch.nn.Linear(n_input, n_output)]
+        if n_hidden_layers == 0:
+            modules = [torch.nn.Linear(input_dim, output_dim)]
 
         else:
-            modules = AbstractNeuralNetwork._hidden_block(
-                n_input=n_input,
-                n_output=n_node,
+            modules = BaseNeuralNetwork._hidden_block(
+                input_dim=input_dim,
+                output_dim=hidden_dim,
                 activation=activation,
                 dropout=dropout,
                 batch_norm=batch_norm
             )
 
-            for _ in range(n_layer - 1):
-                modules += AbstractNeuralNetwork._hidden_block(
-                    n_input=n_node,
-                    n_output=n_node,
+            for _ in range(n_hidden_layers - 1):
+                modules += BaseNeuralNetwork._hidden_block(
+                    input_dim=hidden_dim,
+                    output_dim=hidden_dim,
                     activation=activation,
                     dropout=dropout,
                     batch_norm=batch_norm
                 )
 
-            modules += [torch.nn.Linear(n_node, n_output)]
+            modules += [torch.nn.Linear(hidden_dim, output_dim)]
         return torch.nn.Sequential(*modules)
 
 
-class FeedForwardNeuralNetwork(AbstractNeuralNetwork):
+class FeedForwardNeuralNetwork(BaseNeuralNetwork):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.nn = self.get_neural_network_model(
-            n_input=self.n_input,
-            n_output=self.n_output,
-            n_layer=self.n_layer,
-            n_node=self.n_node,
+            input_dim=self.input_dim,
+            output_dim=self.output_dim,
+            n_hidden_layers=self.n_hidden_layers,
+            hidden_dim=self.hidden_dim,
             activation=self.activation,
             dropout=self.dropout,
             batch_norm=self.batch_norm,
@@ -125,13 +125,13 @@ class FeedForwardNeuralNetwork(AbstractNeuralNetwork):
         return self.nn(x)
 
 
-class NeuralNetworkForODE(AbstractNeuralNetwork):
+class ODEFeedForwardNeuralNetwork(BaseNeuralNetwork):
     def __init__(
             self,
-            n_input: int = 1,
-            n_output: int = 1,
-            n_layer: int = 2,
-            n_node: int = 100,
+            input_dim: int = 1,
+            output_dim: int = 1,
+            n_hidden_layers: int = 2,
+            hidden_dim: int = 100,
             activation: Callable[[torch.Tensor], torch.Tensor] = torch.nn.Tanh(),
             dropout: float = 0.0,
             batch_norm: bool = False,
@@ -140,10 +140,10 @@ class NeuralNetworkForODE(AbstractNeuralNetwork):
             **kwargs
     ):
         super().__init__(
-            n_input=n_input,
-            n_output=n_output,
-            n_layer=n_layer,
-            n_node=n_node,
+            input_dim=input_dim,
+            output_dim=output_dim,
+            n_hidden_layers=n_hidden_layers,
+            hidden_dim=hidden_dim,
             activation=activation,
             dropout=dropout,
             batch_norm=batch_norm,
@@ -152,12 +152,12 @@ class NeuralNetworkForODE(AbstractNeuralNetwork):
             **kwargs
         )
         self.use_time_as_input = use_time_as_input
-        nn_input = n_input + 1 if use_time_as_input else n_input
+        model_input_dim = input_dim + 1 if use_time_as_input else input_dim
         self.nn = self.get_neural_network_model(
-            n_input=nn_input,
-            n_output=n_output,
-            n_layer=n_layer,
-            n_node=n_node,
+            input_dim=model_input_dim,
+            output_dim=output_dim,
+            n_hidden_layers=n_hidden_layers,
+            hidden_dim=hidden_dim,
             activation=activation,
             dropout=dropout,
             batch_norm=batch_norm,

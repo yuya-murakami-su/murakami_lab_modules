@@ -5,7 +5,7 @@ import torch
 from murakami_lab_modules.callbacks import (
     CSVLogger,
     Callback,
-    CheckpointBest,
+    BestCheckpointSaver,
     EarlyStopping,
     GradientNormMonitor,
     HistoryLogger,
@@ -13,8 +13,8 @@ from murakami_lab_modules.callbacks import (
     LearningRateLogger,
     LossMonitor,
     MaxTime,
-    SavePredictionResults,
-    StateDictsSaver,
+    PredictionResultSaver,
+    PeriodicCheckpointSaver,
     TargetLossReached,
     TerminateOnNaN,
     ConsoleLogger,
@@ -22,7 +22,7 @@ from murakami_lab_modules.callbacks import (
 from murakami_lab_modules.data_fitting import DataFitting
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
-from murakami_lab_modules.optimizer import ConstantLROptimizer
+from murakami_lab_modules.optimizer import Optimizer
 
 from tests.test_training_and_predictor import _make_data_handler
 
@@ -38,9 +38,9 @@ class CounterCallback(Callback):
 
 def _make_model_handler(tmp_path, callbacks=(), train_epochs=3, save_result=True, **kwargs):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-3)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
     return ModelHandler(
         nn=nn,
         optimizer=optimizer,
@@ -88,7 +88,9 @@ def test_callback_epoch_events_are_separate(tmp_path):
         callbacks=(LambdaCallback(
             on_epoch_begin=lambda _: calls.append('epoch_begin'),
             on_train_step_end=lambda handler: calls.append(('train_step_end', handler.current_train_losses['total'])),
-            on_validation_end=lambda handler: calls.append(('validation_end', handler.current_valid_losses['total'])),
+            on_validation_end=lambda handler: calls.append(
+                ('validation_end', handler.current_validation_losses['total'])
+            ),
             on_epoch_end=lambda _: calls.append('epoch_end'),
             every=1,
         ),),
@@ -119,15 +121,15 @@ def test_loss_monitor_can_be_disabled_for_headless_training(tmp_path):
 
 def test_early_stopping_requests_stop_after_patience(tmp_path):
     data_handler = _make_data_handler(tmp_path)
-    data_fitting = DataFitting(data_handler, loss_criteria=torch.nn.MSELoss())
-    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
-    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=0.0)
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=0.0)
     model_handler = ModelHandler(
         nn=nn,
         optimizer=optimizer,
         data_fitting=data_fitting,
         train_epochs=10,
-        callbacks=(EarlyStopping(monitor='valid', patience=2),),
+        callbacks=(EarlyStopping(monitor='validation_loss', patience=2),),
         save_result=False,
         verbose=False,
     )
@@ -143,7 +145,7 @@ def test_early_stopping_requests_stop_after_patience(tmp_path):
 
 def test_terminate_on_nan_requests_stop(tmp_path):
     def set_nan(model_handler):
-        model_handler.evolution[-1]['valid'] = float('nan')
+        model_handler.evolution[-1]['validation_loss'] = float('nan')
 
     model_handler = _make_model_handler(
         tmp_path,
@@ -180,7 +182,7 @@ def test_max_time_requests_stop(tmp_path):
 def test_target_loss_reached_requests_stop(tmp_path):
     model_handler = _make_model_handler(
         tmp_path,
-        callbacks=(TargetLossReached(target=1e30, monitor='valid'),),
+        callbacks=(TargetLossReached(target=1e30, monitor='validation_loss'),),
         train_epochs=5,
         save_result=False,
     )
@@ -224,7 +226,7 @@ def test_csv_logger_writes_live_history(tmp_path):
 
     assert csv_path.exists()
     df = pd.read_csv(csv_path)
-    assert list(df.columns) == ['epoch', 'train', 'valid']
+    assert list(df.columns) == ['epoch', 'train_loss', 'validation_loss']
     assert len(df) == 2
 
 
@@ -246,7 +248,7 @@ def test_history_logger_can_save_sparse_rows(tmp_path):
 def test_checkpoint_best_writes_state_dicts(tmp_path):
     model_handler = _make_model_handler(
         tmp_path,
-        callbacks=(CheckpointBest(every=1),),
+        callbacks=(BestCheckpointSaver(every=1),),
         train_epochs=2,
     )
 
@@ -304,19 +306,19 @@ def test_console_logger_throttles_progress_by_time(tmp_path):
 def test_save_prediction_results_requires_saved_results(tmp_path):
     model_handler = _make_model_handler(
         tmp_path,
-        callbacks=(SavePredictionResults(every=1),),
+        callbacks=(PredictionResultSaver(every=1),),
         train_epochs=1,
         save_result=False,
     )
 
-    with pytest.raises(ValueError, match=r'SavePredictionResults requires ModelHandler\(save_result=True\)'):
+    with pytest.raises(ValueError, match=r'PredictionResultSaver requires ModelHandler\(save_result=True\)'):
         model_handler()
 
 
 def test_save_prediction_results_writes_numeric_prediction_csv(tmp_path):
     model_handler = _make_model_handler(
         tmp_path,
-        callbacks=(SavePredictionResults(every=1, run_on_train_end=False),),
+        callbacks=(PredictionResultSaver(every=1, run_on_train_end=False),),
         train_epochs=1,
     )
 
@@ -331,7 +333,7 @@ def test_save_prediction_results_writes_numeric_prediction_csv(tmp_path):
         'x_0',
         'y_true_0',
         'y_pred_0',
-        'mse_error_pred',
+        'prediction_mse_pred',
         'relative_error_pred',
     ]
     assert pd.api.types.is_numeric_dtype(df['x_0'])
@@ -342,7 +344,7 @@ def test_save_prediction_results_writes_numeric_prediction_csv(tmp_path):
 def test_state_dicts_saver_writes_interval_checkpoints(tmp_path):
     model_handler = _make_model_handler(
         tmp_path,
-        callbacks=(StateDictsSaver(every=1),),
+        callbacks=(PeriodicCheckpointSaver(every=1),),
         train_epochs=2,
     )
 
