@@ -40,7 +40,7 @@ class DataFitting:
             phase: str = None,
             epoch: int = None
     ) -> dict[str, object]:
-        y_pred = self._call_nn(nn, x)
+        y_pred = self.predict(nn=nn, x=x, label=label, phase=phase, epoch=epoch)
         loss = self.loss_criteria(y, y_pred)
         self._validate_loss(loss)
         return {
@@ -50,6 +50,16 @@ class DataFitting:
             },
             'y_pred': y_pred
         }
+
+    def predict(
+            self,
+            nn: AbstractNeuralNetwork,
+            x: torch.Tensor,
+            label=None,
+            phase: str = None,
+            epoch: int = None
+    ) -> torch.Tensor:
+        return self._call_nn(nn, x)
 
     @staticmethod
     def _call_nn(nn: AbstractNeuralNetwork, x: torch.Tensor) -> torch.Tensor:

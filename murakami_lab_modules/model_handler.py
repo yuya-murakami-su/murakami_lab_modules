@@ -29,7 +29,6 @@ class ModelHandler:
             train_record_path: str = 'train_record',
             recalculate_valid_loss: bool = True,
             model_name: str = None,
-            callback_epoch: int = None,
             callbacks: tuple[object, ...] = None,
             random_seed: int = 2025,
             save_result: bool = True,
@@ -58,7 +57,6 @@ class ModelHandler:
         self.model_name = model_name
         self.original_model_name = model_name
         self.kwargs = kwargs
-        self.callback_epoch = callback_epoch
         self.callbacks = callbacks or []
         self.save_result = save_result
         self.save_model = save_model
@@ -84,7 +82,6 @@ class ModelHandler:
             'train_record_path': self.train_record_path,
             'recalculate_valid_loss': self.recalculate_valid_loss,
             'model_name': self.model_name,
-            'callback_epoch': self.callback_epoch,
             'callbacks': self.callbacks,
             'random_seed': self.random_seed,
             'save_result': self.save_result,
@@ -224,7 +221,12 @@ class ModelHandler:
         for cb in self.callbacks:
             fn = getattr(cb, method, None)
             if fn is None:
-                raise ValueError(f'No {method} exists in {cb.__name__}. Callbacks must inherit Callback class.')
+                raise ValueError(
+                    f'No {method} exists in {cb.__class__.__name__}. '
+                    f'Callbacks must inherit Callback class.'
+                )
+            if method == 'on_call' and hasattr(cb, 'should_call') and not cb.should_call(self):
+                continue
             if callable(fn):
                 fn(self)
 
@@ -500,8 +502,7 @@ class ModelHandler:
         self.dt_epoch = time.perf_counter() - self.t_init
         if self.epoch == 0:
             self.t_init = time.perf_counter()
-        if self.callback_epoch is not None and self.epoch > 0 and self.epoch % self.callback_epoch == 0:
-            self._run_callbacks('on_call')
+        self._run_callbacks('on_call')
 
     def _is_training_finished(self):
         epoch_limit_reached = (

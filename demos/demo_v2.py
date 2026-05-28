@@ -98,8 +98,7 @@ def main():
         regularization=regularization,
         train_epochs=10_000,
         early_stop=300,
-        callback_epoch=10,
-        callbacks=(LossMonitor(need_data=True, need_reg=True),)
+        callbacks=(LossMonitor(need_data=True, need_reg=True, every=10),)
     )
 
     # Start training / 機械学習の実行
