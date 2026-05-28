@@ -60,6 +60,16 @@ model_handler = ModelHandler(
 model_handler()
 ```
 
+## Data Shapes
+
+`DataHandler` is designed for tabular data and homogeneous tensors with a sample axis first. Tensor data can be
+2D or higher dimensional, for example `[N, features]`, `[N, channels, length]`, or `[N, channels, height, width]`.
+Standard normalization computes statistics over the sample axis and preserves the remaining shape.
+
+For variable-shaped samples or multiple heterogeneous inputs, use `StructuredDataset` directly or subclass it. In that
+case batches are list-backed when tensors cannot be stacked, and the model/loss code should define how those structures
+are consumed.
+
 ## PINN-Style Regularization
 
 Define a subclass of `Regularization` and return one tensor per regularization term.

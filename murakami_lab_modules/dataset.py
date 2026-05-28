@@ -8,6 +8,7 @@ IndexLike = torch.Tensor | np.ndarray
 
 __all__ = [
     'Dataset',
+    'StructuredDataset',
     'DataLoader',
     'TorchDataLoader',
     'create_data_loader',
@@ -143,12 +144,12 @@ class Dataset:
             idx = slice(n_train, n_train + n_valid)
             valid = shuffled._select(idx)
         else:
-            valid = self.empty_dataset()
+            valid = self._empty_like()
         if n_test > 0:
             idx = slice(n_train + n_valid, None)
             test = shuffled._select(idx)
         else:
-            test = self.empty_dataset()
+            test = self._empty_like()
         return train, valid, test
 
     def index_split(self, indices: IndexLike):
@@ -175,6 +176,49 @@ class Dataset:
     @staticmethod
     def empty_dataset() -> 'Dataset':
         return Dataset(torch.empty([0]), torch.empty([0]), np.empty([0, 1], dtype=object))
+
+    def _empty_like(self) -> 'Dataset':
+        return self._select(slice(0, 0))
+
+
+class StructuredDataset(Dataset):
+    """List-backed dataset for user-defined structured samples.
+
+    `DataHandler` intentionally targets homogeneous tensors. Use this class
+    directly, or subclass it, when each sample is a custom structure or tensors
+    have different shapes. Native batching returns lists; torch batching falls
+    back to lists when tensors cannot be stacked.
+    """
+
+    def __init__(
+            self,
+            inputs: list,
+            outputs: list,
+            labels=None
+    ):
+        if type(inputs) is not list or type(outputs) is not list:
+            raise TypeError('StructuredDataset expects list-backed inputs and outputs.')
+        if len(inputs) != len(outputs):
+            raise ValueError(f'inputs and outputs must have the same length: {len(inputs)} != {len(outputs)}.')
+        if labels is None:
+            labels = np.arange(len(inputs)).reshape(-1, 1)
+        labels = self._normalize_labels(labels)
+        if len(labels) != len(inputs):
+            raise ValueError(f'labels must have the same length as inputs: {len(labels)} != {len(inputs)}.')
+        super().__init__(inputs, outputs, labels)
+
+    @staticmethod
+    def _normalize_labels(labels):
+        if torch.is_tensor(labels):
+            labels = labels.detach().cpu().numpy()
+        labels = np.asarray(labels)
+        if labels.ndim == 1:
+            labels = labels.reshape(-1, 1)
+        return labels
+
+    def _select(self, indices) -> 'StructuredDataset':
+        inputs, outputs, labels = self._take(indices)
+        return StructuredDataset(inputs, outputs, labels)
 
 
 class DataLoader:
@@ -228,7 +272,10 @@ class TorchDataLoader:
     def _stack_or_list(values):
         first = values[0]
         if torch.is_tensor(first):
-            return torch.stack(values, dim=0)
+            try:
+                return torch.stack(values, dim=0)
+            except RuntimeError:
+                return list(values)
         return list(values)
 
     @staticmethod

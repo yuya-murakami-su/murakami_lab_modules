@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 
 from murakami_lab_modules.data_handler import DataHandler
-from murakami_lab_modules.dataset import DataLoader, Dataset, TorchDataLoader
+from murakami_lab_modules.dataset import DataLoader, Dataset, StructuredDataset, TorchDataLoader
 from murakami_lab_modules.normalizer import LogStandardNormalizer, StandardNormalizer
 
 
@@ -145,6 +145,63 @@ def test_data_handler_from_tensors_uses_native_loader_by_default():
     assert x.shape == (1, 1)
     assert y.shape == (1, 1)
     assert label[0, 0] == 'e'
+
+
+def test_data_handler_from_tensors_supports_homogeneous_multidimensional_data():
+    inputs = torch.arange(48, dtype=torch.float32).reshape(8, 2, 3)
+    outputs = torch.arange(16, dtype=torch.float32).reshape(8, 1, 2)
+
+    data_handler = DataHandler.from_tensors(
+        inputs=inputs,
+        outputs=outputs,
+        batch_size=3,
+        split_type='index_split',
+        train_indices=np.asarray([0, 1, 2, 3, 4, 5]),
+        valid_indices=np.asarray([6]),
+        test_indices=np.asarray([7]),
+    )
+
+    x, y, label = next(data_handler('train'))
+
+    assert x.shape == (3, 2, 3)
+    assert y.shape == (3, 1, 2)
+    assert label.shape == (3, 1)
+    assert data_handler.summary_dict()['shapes']['inputs'] == [8, 2, 3]
+
+    restored = data_handler.undo_normalize_x(data_handler.normalize_x(inputs[:2]))
+    assert torch.allclose(restored, inputs[:2], atol=1e-5)
+
+
+def test_structured_dataset_native_loader_keeps_variable_shape_tensors():
+    dataset = StructuredDataset(
+        inputs=[torch.ones(2), torch.ones(3)],
+        outputs=[torch.tensor([0.0]), torch.tensor([1.0])],
+        labels=['short', 'long'],
+    )
+    loader = DataLoader(dataset, batch_size=2, shuffle=False)
+
+    x, y, label = next(loader())
+
+    assert isinstance(x, list)
+    assert isinstance(y, list)
+    assert [item.shape for item in x] == [torch.Size([2]), torch.Size([3])]
+    assert label.tolist() == [['short'], ['long']]
+
+
+def test_torch_dataloader_falls_back_to_list_for_variable_shape_tensors():
+    dataset = StructuredDataset(
+        inputs=[torch.ones(2), torch.ones(3)],
+        outputs=[torch.tensor([0.0]), torch.tensor([1.0])],
+        labels=np.asarray(['short', 'long']).reshape(-1, 1),
+    )
+    loader = TorchDataLoader(dataset, batch_size=2, shuffle=False)
+
+    x, y, label = next(loader())
+
+    assert isinstance(x, list)
+    assert torch.equal(y, torch.tensor([[0.0], [1.0]]))
+    assert [item.shape for item in x] == [torch.Size([2]), torch.Size([3])]
+    assert label.tolist() == [['short'], ['long']]
 
 
 def test_normalizers_roundtrip():

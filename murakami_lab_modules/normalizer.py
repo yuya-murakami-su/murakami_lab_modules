@@ -67,7 +67,10 @@ class StandardNormalizer(AbstractNormalizer):
                 logger.warning('STD < epsilon was found during normalization.')
                 self.__class__._std_warned = True
 
-        exclude_indices = self._normalized_exclude_indices(data.shape[1])
+        if self.exclude_indices is not None and data.ndim < 2:
+            raise ValueError(f'{self.__class__.__name__} expects at least 2D data when exclude_indices is used.')
+        n_features = data.shape[1] if data.ndim >= 2 else 1
+        exclude_indices = self._normalized_exclude_indices(n_features)
         if len(exclude_indices) > 0:
             self.ave[:, exclude_indices] = 0
             self.std[:, exclude_indices] = 1
