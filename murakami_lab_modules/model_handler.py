@@ -202,8 +202,8 @@ class ModelHandler:
         self.callback_epoch = callback_epoch
         self.callbacks = callbacks or []
 
-        self._prepare_model_folder()
         self._validate_inputs()
+        self._prepare_model_folder()
         self._save_model_info()
         self._set_model()
         self._prepare_train_record()
