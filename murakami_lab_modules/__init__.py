@@ -10,6 +10,7 @@ __all__ = [
     'input_generator',
     'losses',
     'model_handler',
+    'model_selection',
     'neural_network',
     'normalizer',
     'optimizer',

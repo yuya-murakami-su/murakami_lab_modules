@@ -12,10 +12,6 @@ IndexLike = torch.Tensor | np.ndarray
 
 
 class DataHandler:
-    _device_warned = False
-    _std_warned = False
-    _new_normalizer_warned = False
-
     def __init__(
             self,
             input_data_path: str,
@@ -34,7 +30,6 @@ class DataHandler:
             split_type: str = 'random_split',
             is_validation_data_batched: bool = False,
             use_train_as_valid: bool = False,
-            classic_normalizer: bool = False,
             random_seed: int = 2025,
             csv_encoding: str = None,
             **kwargs
@@ -57,7 +52,6 @@ class DataHandler:
         self.split_type = split_type
         self.is_validation_data_batched = is_validation_data_batched
         self.use_train_as_valid = use_train_as_valid
-        self.classic_normalizer = classic_normalizer
         self.random_seed = random_seed
         self.csv_encoding = csv_encoding
         self.kwargs = kwargs
@@ -73,15 +67,9 @@ class DataHandler:
 
         self._load_datafiles()
         self._send_to_device()
-        if self.classic_normalizer:
-            self._normalize_data()
-            self._get_default_dataset()
-            getattr(self, f'_{split_type}')(**self.kwargs)
-        else:
-            self._warn_new_normalizer()
-            self._get_default_dataset(normalized=False)
-            getattr(self, f'_{split_type}')(**self.kwargs)
-            self._normalize_split_data()
+        self._get_default_dataset()
+        getattr(self, f'_{split_type}')(**self.kwargs)
+        self._normalize_split_data()
         self._update_datasets()
         self._get_data_loader()
 
@@ -103,7 +91,6 @@ class DataHandler:
             'split_type': self.split_type,
             'is_validation_data_batched': self.is_validation_data_batched,
             'use_train_as_valid': self.use_train_as_valid,
-            'classic_normalizer': self.classic_normalizer,
             'random_seed': self.random_seed,
             'csv_encoding': self.csv_encoding,
             **self.kwargs
@@ -141,7 +128,6 @@ class DataHandler:
                 'csv_encoding': self.csv_encoding,
                 'device_name': self.device_name,
                 'batch_size': self.batch_size,
-                'classic_normalizer': self.classic_normalizer,
                 'random_seed': self.random_seed,
             },
             'normalizers': {
@@ -409,20 +395,6 @@ class DataHandler:
         selected = DataHandler._select_columns(selected, indices=indices)
         return DataHandler._to_label_array(selected)
 
-    def _normalize_data(self):
-        self.input_normalizer.fit(self.inputs)
-        self.output_normalizer.fit(self.outputs)
-        self.normed_inputs = self.input_normalizer.transform(self.inputs)
-        self.normed_outputs = self.output_normalizer.transform(self.outputs)
-
-    def _warn_new_normalizer(self):
-        if not self.__class__._new_normalizer_warned:
-            utils.logging(
-                '[Warning] classic_normalizer=False is used. Normalization statistics are calculated from train data '
-                'only. Set classic_normalizer=True to use the previous behavior.'
-            )
-            self.__class__._new_normalizer_warned = True
-
     def _normalize_split_data(self):
         self.input_normalizer.fit(self.train.inputs)
         self.output_normalizer.fit(self.train.outputs)
@@ -447,14 +419,8 @@ class DataHandler:
         )
         self.datasets = {'all': self.dataset}
 
-    def _get_default_dataset(self, normalized: bool = True):
-        if normalized:
-            inputs = self.normed_inputs
-            outputs = self.normed_outputs
-        else:
-            inputs = self.inputs
-            outputs = self.outputs
-        self.dataset = Dataset(inputs, outputs, self.labels)
+    def _get_default_dataset(self):
+        self.dataset = Dataset(self.inputs, self.outputs, self.labels)
         self.n_data: dict[str, int] = {'all': self.dataset.n_data}
         self.datasets: dict[str, Dataset] = {'all': self.dataset}
 
