@@ -69,6 +69,56 @@ def logging(log: str, level: int = py_logging.INFO) -> None:
     logger.log(level, log)
 
 
+def to_float(value, reduce_non_scalar: bool = True) -> float | None:
+    if value is None:
+        return None
+    if torch.is_tensor(value):
+        if value.numel() != 1:
+            if not reduce_non_scalar:
+                raise ValueError(f'Expected a scalar tensor, but shape={tuple(value.shape)} was given.')
+            value = value.mean()
+        return float(value.detach().cpu().item())
+    if isinstance(value, np.generic):
+        return float(value.item())
+    return float(value)
+
+
+def is_improved(value: float, best_value: float | None, mode: str, min_delta: float) -> bool:
+    if best_value is None:
+        return True
+    if mode == 'min':
+        return value < best_value - min_delta
+    if mode == 'max':
+        return value > best_value + min_delta
+    raise ValueError("mode must be 'min' or 'max'.")
+
+
+def labels_to_numpy(labels) -> np.ndarray:
+    if torch.is_tensor(labels):
+        labels = labels.detach().cpu().numpy()
+    else:
+        labels = np.asarray(labels)
+    if labels.ndim == 1:
+        labels = labels.reshape(-1, 1)
+    return labels
+
+
+def resolve_torch_dtype(dtype: torch.dtype | str) -> torch.dtype:
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    if isinstance(dtype, str):
+        dtype_name = dtype.replace('torch.', '')
+        if hasattr(torch, dtype_name):
+            resolved = getattr(torch, dtype_name)
+            if isinstance(resolved, torch.dtype):
+                return resolved
+    raise TypeError(f'dtype must be torch.dtype or torch dtype name. {dtype!r} was given.')
+
+
+def is_floating_dtype(dtype: torch.dtype) -> bool:
+    return torch.empty((), dtype=dtype).is_floating_point()
+
+
 _device_alart = True
 def get_device(device_name: str) -> torch.device:
     global _device_alart

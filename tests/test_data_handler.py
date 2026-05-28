@@ -4,7 +4,7 @@ import torch
 
 from murakami_lab_modules.data_handler import DataHandler
 from murakami_lab_modules.dataset import DataLoader, Dataset, StructuredDataset, TorchDataLoader
-from murakami_lab_modules.normalizer import LogStandardNormalizer, StandardNormalizer
+from murakami_lab_modules.normalizer import IdentityNormalizer, LogStandardNormalizer, StandardNormalizer
 
 
 def test_dataset_random_split_does_not_mutate_original():
@@ -170,6 +170,25 @@ def test_data_handler_from_tensors_supports_homogeneous_multidimensional_data():
 
     restored = data_handler.undo_normalize_x(data_handler.normalize_x(inputs[:2]))
     assert torch.allclose(restored, inputs[:2], atol=1e-5)
+
+
+def test_data_handler_can_keep_class_targets_as_long_without_output_normalization():
+    data_handler = DataHandler.from_tensors(
+        inputs=torch.arange(8, dtype=torch.float32).reshape(4, 2),
+        outputs=torch.tensor([0, 1, 1, 0]),
+        batch_size=2,
+        output_dtype=torch.long,
+        split_type='index_split',
+        train_indices=np.asarray([0, 1, 2]),
+        valid_indices=np.asarray([3]),
+    )
+
+    _, y, _ = next(data_handler('train'))
+
+    assert y.dtype == torch.long
+    assert isinstance(data_handler.output_normalizer, IdentityNormalizer)
+    assert data_handler.summary_dict()['loading']['output_dtype'] == 'int64'
+    assert data_handler.undo_normalize_y(y).dtype == torch.long
 
 
 def test_structured_dataset_native_loader_keeps_variable_shape_tensors():

@@ -2,13 +2,14 @@ import numpy as np
 import pandas as pd
 import torch
 
-from murakami_lab_modules.data_fitting import DataFitting
+from murakami_lab_modules.data_fitting import BinaryClassificationFitting, DataFitting, MultiClassClassificationFitting
 from murakami_lab_modules.data_handler import DataHandler
 from murakami_lab_modules.model_handler import ModelHandler
 from murakami_lab_modules.neural_network import FeedForwardNeuralNetwork
 from murakami_lab_modules.optimizer import ConstantLROptimizer
 from murakami_lab_modules.predictor import NNPredictor
 from murakami_lab_modules.regularization import Regularization
+from murakami_lab_modules.losses import binary_accuracy_from_logits, multiclass_accuracy_from_logits
 
 
 class DummyInputGenerator:
@@ -389,3 +390,71 @@ def test_nn_predictor_restores_saved_model_and_predicts_numpy_and_torch(tmp_path
     assert np_output.shape == (2, 1)
     assert torch_output.shape == (2, 1)
     assert np.allclose(np_output, torch_output.detach().cpu().numpy())
+
+
+def test_multiclass_classification_fitting_trains_and_predictor_postprocesses(tmp_path):
+    data_handler = DataHandler.from_tensors(
+        inputs=torch.tensor(
+            [
+                [0.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 0.0],
+                [1.0, 1.0],
+            ]
+        ),
+        outputs=torch.tensor([0, 1, 1, 0]),
+        batch_size=4,
+        output_dtype=torch.long,
+        split_ratio=(1.0,),
+        use_train_as_valid=True,
+    )
+    data_fitting = MultiClassClassificationFitting(data_handler)
+    nn = FeedForwardNeuralNetwork(n_input=2, n_output=2, n_layer=1, n_node=4, random_seed=1)
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-2)
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=1,
+        save_path=str(tmp_path / 'Model'),
+        summary_path=str(tmp_path / 'run_summary'),
+        verbose=False,
+    )
+
+    model_handler()
+
+    x, y, label = next(data_handler('train'))
+    loss_info = data_fitting.compute_loss(nn=model_handler.nn, x=x, y=y, label=label)
+    assert loss_info['total'].ndim == 0
+    assert loss_info['y_pred'].shape == (4, 2)
+    assert 0.0 <= multiclass_accuracy_from_logits(y, loss_info['y_pred']).item() <= 1.0
+
+    probability_predictor = NNPredictor(model_path=model_handler.model_path, postprocess='probability')
+    probabilities = probability_predictor(np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32))
+    assert probabilities.shape == (2, 2)
+    assert np.allclose(probabilities.sum(axis=1), np.ones(2), atol=1e-6)
+
+    class_predictor = NNPredictor(model_path=model_handler.model_path, postprocess='class')
+    classes = class_predictor(torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=torch.float32))
+    assert classes.shape == (2,)
+    assert classes.dtype == torch.long
+
+
+def test_binary_classification_fitting_uses_bce_with_logits():
+    data_handler = DataHandler.from_tensors(
+        inputs=torch.tensor([[0.0], [1.0], [2.0]]),
+        outputs=torch.tensor([[0.0], [1.0], [1.0]]),
+        batch_size=3,
+        normalize_output=False,
+        split_ratio=(1.0,),
+        use_train_as_valid=True,
+    )
+    data_fitting = BinaryClassificationFitting(data_handler)
+    nn = FeedForwardNeuralNetwork(n_input=1, n_output=1, n_layer=0, random_seed=1)
+    x, y, label = next(data_handler('train'))
+
+    loss_info = data_fitting.compute_loss(nn=nn, x=x, y=y, label=label)
+
+    assert loss_info['total'].ndim == 0
+    assert loss_info['y_pred'].shape == (3, 1)
+    assert 0.0 <= binary_accuracy_from_logits(y, loss_info['y_pred']).item() <= 1.0

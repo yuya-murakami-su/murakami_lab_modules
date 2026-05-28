@@ -220,22 +220,10 @@ def sample_parameter_space(
     return samples
 
 
-def _to_float(value) -> float | None:
-    if value is None:
-        return None
-    if torch.is_tensor(value):
-        if value.numel() != 1:
-            value = value.mean()
-        return float(value.detach().cpu().item())
-    if isinstance(value, np.generic):
-        return float(value.item())
-    return float(value)
-
-
 def _metric_value(metric: Metric, y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
     value = metric.function(y_true, y_pred)
     if torch.is_tensor(value):
-        return _to_float(value)
+        return utils.to_float(value)
     return float(value)
 
 
@@ -258,7 +246,7 @@ def evaluate_data_loss(model_handler, phase: str) -> float | None:
                 phase=phase,
                 epoch=getattr(model_handler, 'epoch', None)
             )
-            losses.append(_to_float(loss_info['total']))
+            losses.append(utils.to_float(loss_info['total']))
             batch_sizes.append(len(x))
     return float(np.average(losses, weights=batch_sizes)) if losses else None
 
@@ -298,7 +286,7 @@ def _recorded_data_loss(model_handler, phase: str, prefer_best: bool = True) -> 
         key = f'{phase}_data'
     if key not in record:
         return None
-    return _to_float(record[key])
+    return utils.to_float(record[key])
 
 
 def collect_data_losses(model_handler, phases: Sequence[str]) -> dict[str, float | None]:
@@ -373,7 +361,7 @@ def _result_from_model_handler(
         outer_fold=context.outer_fold,
         inner_fold=context.inner_fold,
         seed=context.seed,
-        best_loss=_to_float(getattr(model_handler, 'best_loss', None)),
+        best_loss=utils.to_float(getattr(model_handler, 'best_loss', None)),
         train_loss=losses['train_loss'],
         valid_loss=losses['valid_loss'],
         test_loss=losses['test_loss'],

@@ -303,9 +303,7 @@ class ModelHandler:
 
     @staticmethod
     def _to_float(value) -> float:
-        if torch.is_tensor(value):
-            return float(value.detach().cpu().item())
-        return float(value)
+        return utils.to_float(value, reduce_non_scalar=False)
 
     @classmethod
     def _add_loss(cls, current: torch.Tensor | None, value) -> torch.Tensor:

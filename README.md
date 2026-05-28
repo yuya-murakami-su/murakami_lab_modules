@@ -70,6 +70,43 @@ For variable-shaped samples or multiple heterogeneous inputs, use `StructuredDat
 case batches are list-backed when tensors cannot be stacked, and the model/loss code should define how those structures
 are consumed.
 
+## Classification
+
+The library is still regression/PINN-oriented, but simple classification is supported through separate fitting classes.
+For multi-class classification, keep targets as class indices and disable output normalization by using an integer
+output dtype.
+
+```python
+import torch
+
+from murakami_lab_modules.data_fitting import MultiClassClassificationFitting
+from murakami_lab_modules.data_handler import DataHandler
+
+data_handler = DataHandler.from_tensors(
+    inputs=x,
+    outputs=class_index,
+    output_dtype=torch.long,
+    batch_size=32,
+)
+data_fitting = MultiClassClassificationFitting(data_handler)
+```
+
+For binary classification with `BCEWithLogitsLoss`, use float targets and disable output normalization explicitly:
+
+```python
+from murakami_lab_modules.data_fitting import BinaryClassificationFitting
+
+data_handler = DataHandler.from_tensors(
+    inputs=x,
+    outputs=binary_target,
+    normalize_output=False,
+)
+data_fitting = BinaryClassificationFitting(data_handler)
+```
+
+`NNPredictor(..., postprocess='probability')` returns sigmoid/softmax probabilities, and
+`NNPredictor(..., postprocess='class')` returns predicted classes.
+
 ## PINN-Style Regularization
 
 Define a subclass of `Regularization` and return one tensor per regularization term.

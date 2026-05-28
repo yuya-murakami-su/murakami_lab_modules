@@ -123,14 +123,19 @@ class NNPredictor(AbstractPredictor):
             nn_class: type[AbstractNeuralNetwork] = None,
             load_normalizer: bool = True,
             device_name: str = 'cpu',
+            postprocess: str = 'raw',
+            binary_threshold: float = 0.5,
     ):
         super().__init__()
         self.model_path = Path(model_path)
         self.nn_class = nn_class
         self.load_normalizer = load_normalizer
         self.device_name = device_name
+        self.postprocess = postprocess
+        self.binary_threshold = binary_threshold
 
         self.device = utils.get_device(device_name)
+        self._validate_postprocess()
         self.model = self._load_nn_model()
 
     def _load_nn_model(self):
@@ -149,6 +154,7 @@ class NNPredictor(AbstractPredictor):
                     nn_inputs = self.input_normalizer.transform(x)
                     nn_outputs = self.nn(nn_inputs)
                     outputs = self.output_normalizer.inverse_transform(nn_outputs)
+                    outputs = self._postprocess_outputs(outputs)
                     if output_np:
                         return outputs.cpu().numpy()
                     else:
@@ -164,12 +170,30 @@ class NNPredictor(AbstractPredictor):
                         x = x.to(self.device)
                         output_np = False
                     nn_outputs = self.nn(x)
+                    nn_outputs = self._postprocess_outputs(nn_outputs)
                     if output_np:
                         return nn_outputs.cpu().numpy()
                     else:
                         return nn_outputs
 
         return nn_function
+
+    def _validate_postprocess(self) -> None:
+        if self.postprocess not in {'raw', 'probability', 'class'}:
+            raise ValueError("postprocess must be one of 'raw', 'probability', or 'class'.")
+        if not 0.0 <= self.binary_threshold <= 1.0:
+            raise ValueError('binary_threshold must satisfy 0.0 <= binary_threshold <= 1.0.')
+
+    def _postprocess_outputs(self, outputs: torch.Tensor) -> torch.Tensor:
+        if self.postprocess == 'raw':
+            return outputs
+        if self.postprocess == 'probability':
+            if outputs.shape[-1] == 1:
+                return torch.sigmoid(outputs)
+            return torch.softmax(outputs, dim=-1)
+        if outputs.shape[-1] == 1:
+            return (torch.sigmoid(outputs) >= self.binary_threshold).to(dtype=torch.long)
+        return torch.argmax(outputs, dim=-1)
 
     def _prepare_nn(self):
         config = utils.load_json(self.model_path / 'config.json')

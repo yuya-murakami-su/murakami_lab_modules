@@ -4,6 +4,8 @@ from collections.abc import Iterator
 import numpy as np
 import torch
 
+from . import utils
+
 IndexLike = torch.Tensor | np.ndarray
 
 __all__ = [
@@ -209,12 +211,7 @@ class StructuredDataset(Dataset):
 
     @staticmethod
     def _normalize_labels(labels):
-        if torch.is_tensor(labels):
-            labels = labels.detach().cpu().numpy()
-        labels = np.asarray(labels)
-        if labels.ndim == 1:
-            labels = labels.reshape(-1, 1)
-        return labels
+        return utils.labels_to_numpy(labels)
 
     def _select(self, indices) -> 'StructuredDataset':
         inputs, outputs, labels = self._take(indices)

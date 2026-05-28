@@ -9,6 +9,7 @@ import pandas as pd
 import torch
 
 from . import utils
+from .losses import mse_error, relative_error
 
 logger = utils.get_logger(__name__)
 
@@ -38,24 +39,6 @@ __all__ = [
     'mse_error',
     'relative_error',
 ]
-
-
-def mse_error(x_true: torch.Tensor, x_pred: torch.Tensor):
-    return torch.square(x_true - x_pred).mean(dim=1, keepdim=True)
-
-
-def relative_error(x_true: torch.Tensor, x_pred: torch.Tensor):
-    return ((x_true - x_pred).abs() / (x_true.abs() + 1e-10)).mean(dim=1, keepdim=True)
-
-
-def _labels_to_numpy(labels) -> np.ndarray:
-    if torch.is_tensor(labels):
-        labels = labels.detach().cpu().numpy()
-    else:
-        labels = np.asarray(labels)
-    if labels.ndim == 1:
-        labels = labels.reshape(-1, 1)
-    return labels
 
 
 def _get_label_columns(data_handler) -> list[str]:
@@ -107,14 +90,6 @@ def _record_value(model_handler, monitor: str, callback_name: str) -> float:
         keys = ', '.join(record.keys())
         raise KeyError(f'{monitor} was not found in evolution record. Available keys: {keys}')
     return float(record[monitor])
-
-
-def _is_improved(value: float, best_value: float | None, mode: str, min_delta: float) -> bool:
-    if best_value is None:
-        return True
-    if mode == 'min':
-        return value < best_value - min_delta
-    return value > best_value + min_delta
 
 
 def _state_dicts(model_handler, save_optimizer: bool, copy_state: bool = False) -> dict[str, object]:
@@ -208,7 +183,7 @@ class EarlyStopping(Callback):
         self.wait = 0
 
     def _is_improved(self, value: float) -> bool:
-        return _is_improved(value, self.best_value, self.mode, self.min_delta)
+        return utils.is_improved(value, self.best_value, self.mode, self.min_delta)
 
     def _current_value(self, model_handler) -> float:
         return _record_value(model_handler, self.monitor, self.__class__.__name__)
@@ -458,7 +433,7 @@ class CheckpointBest(Callback):
 
     def on_epoch_end(self, model_handler):
         value = _record_value(model_handler, self.monitor, self.__class__.__name__)
-        if not _is_improved(value, self.best_value, self.mode, self.min_delta):
+        if not utils.is_improved(value, self.best_value, self.mode, self.min_delta):
             return
         self.best_value = value
         self.best_epoch = model_handler.epoch
@@ -549,7 +524,7 @@ class BestModelTracker(Callback):
     def on_epoch_end(self, model_handler):
         monitor = self._monitor(model_handler)
         value = _record_value(model_handler, monitor, self.__class__.__name__)
-        if _is_improved(value, self.best_value, self.mode, self.min_delta):
+        if utils.is_improved(value, self.best_value, self.mode, self.min_delta):
             self.best_value = value
             self.best_epoch = model_handler.epoch
             model_handler.best_loss = value
@@ -939,7 +914,7 @@ class SavePredictionResults(Callback):
                     continue
                 for x, y, label in data_handler(key):
                     y_pred = _predict(model_handler, x=x, label=label, phase=key)
-                    label_np = _labels_to_numpy(label)
+                    label_np = utils.labels_to_numpy(label)
 
                     x_ = data_handler.undo_normalize_x(x)
                     y_ = data_handler.undo_normalize_y(y)
