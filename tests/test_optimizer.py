@@ -27,6 +27,16 @@ def test_constant_lr_optimizer():
 
     assert _lrs(optimizer, [0, 10]) == [1e-2, 1e-2]
     assert optimizer.optimizer.param_groups[0]['momentum'] == 0.9
+    assert optimizer.optimizer.param_groups[0]['weight_decay'] == 0.0
+
+
+def test_optimizer_supports_explicit_weight_decay():
+    optimizer = ConstantLROptimizer(torch.optim.SGD, lr=1e-2, weight_decay=1e-4)
+    parameter = torch.nn.Parameter(torch.tensor([1.0]))
+
+    optimizer.set_parameters([parameter])
+
+    assert optimizer.optimizer.param_groups[0]['weight_decay'] == 1e-4
 
 
 def test_constant_lr_optimizer_skips_per_step_lr_updates_and_uses_set_to_none():

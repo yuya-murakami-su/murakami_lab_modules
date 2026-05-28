@@ -18,8 +18,14 @@ __all__ = [
 ]
 
 
-def _merge_optimizer_params(optimizer_params: dict[str, object] = None, extra_params: dict[str, object] = None):
+def _merge_optimizer_params(
+        optimizer_params: dict[str, object] = None,
+        extra_params: dict[str, object] = None,
+        weight_decay: float = 0.0
+):
+    _validate_non_negative_float(weight_decay, 'weight_decay')
     params = dict(optimizer_params or {})
+    params.setdefault('weight_decay', weight_decay)
     params.update(extra_params or {})
     return params
 
@@ -109,6 +115,7 @@ class ConstantLROptimizer(OptimizerBase):
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             lr: float = 1e-3,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -116,9 +123,10 @@ class ConstantLROptimizer(OptimizerBase):
         self.lr = lr
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             lr=lr,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -139,6 +147,7 @@ class WarmupOptimizer(OptimizerBase):
             scale: str = 'exponential',
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -151,12 +160,13 @@ class WarmupOptimizer(OptimizerBase):
         self.scale = scale
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             init_lr=init_lr,
             warmup_epochs=warmup_epochs,
             final_lr=final_lr,
             scale=scale,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -179,6 +189,7 @@ class WarmupDecayOptimizer(OptimizerBase):
             decay_scale: str = 'exponential',
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -197,7 +208,7 @@ class WarmupDecayOptimizer(OptimizerBase):
         self.decay_scale = decay_scale
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             init_lr=init_lr,
             warmup_epochs=warmup_epochs,
@@ -206,6 +217,7 @@ class WarmupDecayOptimizer(OptimizerBase):
             final_lr=final_lr,
             warmup_scale=warmup_scale,
             decay_scale=decay_scale,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -237,6 +249,7 @@ class InverseTimeDecayOptimizer(OptimizerBase):
             min_lr: float = None,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -251,12 +264,13 @@ class InverseTimeDecayOptimizer(OptimizerBase):
         self.min_lr = min_lr
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             decay_steps=decay_steps,
             decay_rate=decay_rate,
             min_lr=min_lr,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -278,6 +292,7 @@ class ExponentialDecayOptimizer(OptimizerBase):
             min_lr: float = None,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -293,13 +308,14 @@ class ExponentialDecayOptimizer(OptimizerBase):
         self.min_lr = min_lr
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             gamma=gamma,
             decay_steps=decay_steps,
             staircase=staircase,
             min_lr=min_lr,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -321,6 +337,7 @@ class StepDecayOptimizer(OptimizerBase):
             min_lr: float = None,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -335,12 +352,13 @@ class StepDecayOptimizer(OptimizerBase):
         self.min_lr = min_lr
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             step_size=step_size,
             gamma=gamma,
             min_lr=min_lr,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -360,6 +378,7 @@ class CosineAnnealingOptimizer(OptimizerBase):
             min_lr: float = 0.0,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -371,11 +390,12 @@ class CosineAnnealingOptimizer(OptimizerBase):
         self.min_lr = min_lr
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             total_epochs=total_epochs,
             min_lr=min_lr,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
@@ -394,6 +414,7 @@ class PolynomialDecayOptimizer(OptimizerBase):
             power: float = 1.0,
             algorithm: Callable[..., torch.optim.Optimizer] = torch.optim.Adam,
             optimizer_params: dict[str, object] = None,
+            weight_decay: float = 0.0,
             zero_grad_set_to_none: bool = True,
             **optimizer_kwargs
     ):
@@ -408,12 +429,13 @@ class PolynomialDecayOptimizer(OptimizerBase):
         self.power = power
         super().__init__(
             algorithm=algorithm,
-            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs),
+            optimizer_params=_merge_optimizer_params(optimizer_params, optimizer_kwargs, weight_decay=weight_decay),
             zero_grad_set_to_none=zero_grad_set_to_none,
             initial_lr=initial_lr,
             total_epochs=total_epochs,
             final_lr=final_lr,
             power=power,
+            weight_decay=weight_decay,
         )
 
     def get_lr_function(self) -> Callable[[int], float]:
