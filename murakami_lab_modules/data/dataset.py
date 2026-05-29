@@ -35,6 +35,11 @@ class Dataset:
     labels:
         Metadata labels. Labels are kept as metadata and are not converted to a
         training tensor unless a downstream user chooses to do so.
+
+    Notes
+    -----
+    ``to(device)`` moves tensor inputs and outputs in-place and returns this
+    dataset. Labels are metadata and are intentionally left unchanged.
     """
 
     def __init__(
@@ -50,6 +55,30 @@ class Dataset:
             self.n_data = inputs.shape[0]
         else:
             self.n_data = len(inputs)
+
+    @staticmethod
+    def _move_tensors_to_device(value, device: torch.device):
+        if torch.is_tensor(value):
+            return value.to(device)
+        if isinstance(value, list):
+            return [Dataset._move_tensors_to_device(item, device) for item in value]
+        if isinstance(value, tuple):
+            return tuple(Dataset._move_tensors_to_device(item, device) for item in value)
+        if isinstance(value, dict):
+            return {key: Dataset._move_tensors_to_device(item, device) for key, item in value.items()}
+        return value
+
+    def to(self, device: torch.device | str) -> 'Dataset':
+        """Move tensor inputs and outputs to ``device`` in-place.
+
+        Nested tensors inside list, tuple, or dict containers are moved
+        recursively. Labels are metadata and are not moved or converted.
+        """
+
+        device = torch.device(device)
+        self.inputs = self._move_tensors_to_device(self.inputs, device)
+        self.outputs = self._move_tensors_to_device(self.outputs, device)
+        return self
 
     @staticmethod
     def _get_tensor_indices(indices: IndexLike | list[int] | tuple[int, ...], device: torch.device) -> torch.Tensor:

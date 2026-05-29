@@ -23,6 +23,25 @@ def test_dataset_random_split_does_not_mutate_original():
     assert train.labels.dtype.kind in {'U', 'S', 'O'}
 
 
+def test_dataset_to_moves_tensor_inputs_and_outputs_but_keeps_labels():
+    labels = np.asarray(['a', 'b']).reshape(-1, 1)
+    dataset = Dataset(
+        inputs=[torch.ones(1), {'nested': torch.ones(2)}],
+        outputs=[torch.zeros(1), (torch.zeros(2), 'meta')],
+        labels=labels,
+    )
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    returned = dataset.to(device)
+
+    assert returned is dataset
+    assert dataset.inputs[0].device == device
+    assert dataset.inputs[1]['nested'].device == device
+    assert dataset.outputs[0].device == device
+    assert dataset.outputs[1][0].device == device
+    assert dataset.labels is labels
+
+
 def test_dataloader_shuffle_selects_only_batch_sized_slices():
     inputs = torch.arange(12, dtype=torch.float32).reshape(6, 2)
     outputs = torch.arange(6, dtype=torch.float32).reshape(6, 1)
@@ -145,6 +164,63 @@ def test_data_handler_from_tensors_uses_native_loader_by_default():
     assert x.shape == (1, 1)
     assert y.shape == (1, 1)
     assert label[0, 0] == 'e'
+
+
+def test_data_handler_moves_precreated_split_datasets_to_target_device():
+    target_device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+
+    class PreSplitDataHandler(DataHandler):
+        def _load_datafiles(self):
+            self.inputs = torch.arange(10, dtype=torch.float32).reshape(5, 2)
+            self.outputs = torch.arange(5, dtype=torch.float32).reshape(5, 1)
+            self.labels = np.asarray(['a', 'b', 'c', 'd', 'e']).reshape(-1, 1)
+            self.dataset = Dataset(self.inputs, self.outputs, self.labels)
+            self.train = Dataset(self.inputs[:3], self.outputs[:3], self.labels[:3])
+            self.valid = Dataset(self.inputs[3:4], self.outputs[3:4], self.labels[3:4])
+            self.test = Dataset(self.inputs[4:], self.outputs[4:], self.labels[4:])
+            self.datasets = {'precreated': self.train}
+
+        def _random_split(self, split_ratio=None, **kwargs):
+            return
+
+    data_handler = PreSplitDataHandler(
+        input_data_path='unused',
+        split_ratio=(0.6, 0.2, 0.2),
+        batch_size=2,
+        device_name=target_device,
+    )
+
+    x, y, label = next(data_handler('train'))
+
+    assert x.device.type == torch.device(target_device).type
+    assert y.device.type == torch.device(target_device).type
+    if torch.cuda.is_available():
+        assert x.device.index == 0
+        assert y.device.index == 0
+    assert label.dtype.kind in {'U', 'S', 'O'}
+
+
+def test_data_handler_standard_split_still_uses_target_device():
+    target_device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+
+    data_handler = DataHandler.from_tensors(
+        inputs=torch.arange(8, dtype=torch.float32).reshape(4, 2),
+        outputs=torch.arange(4, dtype=torch.float32).reshape(4, 1),
+        batch_size=2,
+        device_name=target_device,
+        split_type='index_split',
+        train_indices=np.asarray([0, 1]),
+        valid_indices=np.asarray([2]),
+        test_indices=np.asarray([3]),
+    )
+
+    x, y, _ = next(data_handler('train'))
+
+    assert x.device.type == torch.device(target_device).type
+    assert y.device.type == torch.device(target_device).type
+    if torch.cuda.is_available():
+        assert x.device.index == 0
+        assert y.device.index == 0
 
 
 def test_data_handler_from_tensors_supports_homogeneous_multidimensional_data():

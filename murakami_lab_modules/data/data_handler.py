@@ -53,6 +53,13 @@ class DataHandler:
     -----
     Labels are metadata. They may be strings or other non-numeric values and are
     not used by the default loss functions.
+
+    Subclasses should normally create ``self.inputs``, ``self.outputs``, and
+    ``self.labels`` in ``_load_datafiles()`` and leave splitting to
+    ``_random_split()`` or ``_index_split()``. For backward compatibility,
+    pre-created ``Dataset`` attributes such as ``dataset``, ``train``,
+    ``valid``, ``test``, and entries in ``datasets`` are also moved to
+    ``device_name`` during setup. Dataset labels remain unchanged.
     """
 
     def __init__(
@@ -418,6 +425,22 @@ class DataHandler:
     def _send_to_device(self):
         self.inputs = self.inputs.to(self.device)
         self.outputs = self.outputs.to(self.device)
+        for dataset_name in ('dataset', 'train', 'valid', 'test'):
+            if hasattr(self, dataset_name):
+                self._send_dataset_to_device(dataset_name)
+        if hasattr(self, 'datasets'):
+            self.datasets = {
+                key: self._dataset_to_device(dataset)
+                for key, dataset in self.datasets.items()
+            }
+
+    def _send_dataset_to_device(self, dataset_name: str) -> None:
+        setattr(self, dataset_name, self._dataset_to_device(getattr(self, dataset_name)))
+
+    def _dataset_to_device(self, dataset):
+        if isinstance(dataset, _dataset.Dataset):
+            return dataset.to(self.device)
+        return dataset
 
     @classmethod
     def _default_output_normalizer(
