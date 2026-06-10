@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 import torch
 
+from murakami_lab_modules.data import DataHandler
 from murakami_lab_modules.training import (
     CSVLogger,
     Callback,
@@ -293,7 +294,7 @@ def test_console_logger_throttles_progress_by_time(tmp_path):
     stream = Stream()
     model_handler = _make_model_handler(
         tmp_path,
-        callbacks=(ConsoleLogger(stream=stream, min_interval=10.0, log_summary=False),),
+        callbacks=(ConsoleLogger(stream=stream, min_interval=10.0, log_summary=False, leave_last_message=False),),
         train_epochs=3,
         save_result=False,
     )
@@ -301,6 +302,83 @@ def test_console_logger_throttles_progress_by_time(tmp_path):
     model_handler()
 
     assert stream.count == 2
+
+
+def test_console_logger_leaves_final_progress_line(tmp_path):
+    class Stream:
+        def __init__(self):
+            self.chunks = []
+
+        def write(self, value):
+            self.chunks.append(value)
+
+        def flush(self):
+            pass
+
+    stream = Stream()
+    model_handler = _make_model_handler(
+        tmp_path,
+        callbacks=(ConsoleLogger(stream=stream, min_interval=10.0, log_summary=False),),
+        train_epochs=3,
+        save_result=False,
+    )
+
+    model_handler()
+
+    assert stream.chunks[-1] == '\n'
+    assert '    3 ' in stream.chunks[-2]
+    assert 'Train ' in stream.chunks[-2]
+    assert 'Validation ' in stream.chunks[-2]
+
+
+def test_console_logger_shows_test_loss_when_requested_without_saving(tmp_path):
+    x_path = tmp_path / 'x.csv'
+    y_path = tmp_path / 'y.csv'
+    pd.DataFrame({'x': [0.0, 1.0, 2.0, 3.0]}).to_csv(x_path, index=False)
+    pd.DataFrame({'y': [0.0, 2.0, 4.0, 6.0]}).to_csv(y_path, index=False)
+    data_handler = DataHandler(
+        input_data_path=str(x_path),
+        input_columns=['x'],
+        output_data_path=str(y_path),
+        output_columns=['y'],
+        batch_size=2,
+        split_type='index_split',
+        train_indices=[0, 1],
+        test_indices=[2, 3],
+        use_train_as_valid=True,
+        device_name='cpu',
+    )
+    data_fitting = DataFitting(data_handler, loss_fn=torch.nn.MSELoss())
+    nn = FeedForwardNeuralNetwork(input_dim=1, output_dim=1, n_hidden_layers=0, random_seed=1)
+    optimizer = Optimizer(torch.optim.SGD, lr=1e-3)
+
+    class Stream:
+        def __init__(self):
+            self.chunks = []
+
+        def write(self, value):
+            self.chunks.append(value)
+
+        def flush(self):
+            pass
+
+    stream = Stream()
+    model_handler = ModelHandler(
+        nn=nn,
+        optimizer=optimizer,
+        data_fitting=data_fitting,
+        train_epochs=1,
+        callbacks=(ConsoleLogger(stream=stream, log_summary=False),),
+        save_result=False,
+        evaluate_test=True,
+        verbose=False,
+    )
+
+    model_handler()
+
+    assert 'Test ' in stream.chunks[-2]
+    assert model_handler._test_loss_evaluated
+    assert model_handler._test_loss_shown
 
 
 def test_save_prediction_results_requires_saved_results(tmp_path):

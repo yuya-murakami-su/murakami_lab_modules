@@ -663,6 +663,7 @@ class ConsoleLogger(Callback):
             progress: bool = True,
             log_summary: bool = True,
             min_interval: float = 1.0,
+            leave_last_message: bool = True,
             stream=None
     ):
         super().__init__(every=every, run_on_train_end=True, priority=priority)
@@ -671,6 +672,7 @@ class ConsoleLogger(Callback):
         self.progress = progress
         self.log_summary = log_summary
         self.min_interval = float(min_interval)
+        self.leave_last_message = leave_last_message
         self.stream = stream if stream is not None else sys.stderr
         self._last_message_length = 0
         self._last_progress_time = None
@@ -690,10 +692,15 @@ class ConsoleLogger(Callback):
     def on_epoch_end(self, model_handler):
         if not self.progress or not self._should_update_progress():
             return
+        self._write_progress(self._format_progress_message(model_handler))
+
+    def _format_progress_message(self, model_handler, test_loss: float = np.nan) -> str:
         losses = _latest_evolution_record(model_handler, self.__class__.__name__)
+        display_epoch = losses['epoch'] + 1
         dt_str = self._time_string(model_handler)
         best_loss = getattr(model_handler, 'best_loss', np.nan)
         epochs_since_best = getattr(model_handler, 'epochs_since_best', 0)
+        test_str = '' if np.isnan(test_loss) else f', Test {test_loss:.3e}'
 
         if model_handler.has_data:
             if model_handler.has_reg:
@@ -704,23 +711,25 @@ class ConsoleLogger(Callback):
                     ]
                 )
                 message = (
-                    f'\r[{pd.Timestamp.now():%H:%M:%S}] '
-                    f'{model_handler.epoch + 1: >5} {dt_str} | '
+                    f'[{pd.Timestamp.now():%H:%M:%S}] '
+                    f'{display_epoch: >5} {dt_str} | '
                     f'Train {losses["train_loss"]:.3e} '
                     f'({losses["train_data_loss"]:.3e} & {losses["train_regularization_loss"]:.3e}), '
                     f'Validation {losses["validation_loss"]:.3e} '
                     f'({losses["validation_data_loss"]:.3e} & '
-                    f'{losses["validation_regularization_loss"]:.3e}) | '
+                    f'{losses["validation_regularization_loss"]:.3e})'
+                    f'{test_str} | '
                     f'{validation_regularization} | '
                     f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                     f'lr {model_handler.optimizer.current_lr():.2e}'
                 )
             else:
                 message = (
-                    f'\r[{pd.Timestamp.now():%H:%M:%S}] '
-                    f'{model_handler.epoch + 1: >5} {dt_str} | '
+                    f'[{pd.Timestamp.now():%H:%M:%S}] '
+                    f'{display_epoch: >5} {dt_str} | '
                     f'Train {losses["train_loss"]:.3e}, '
-                    f'Validation {losses["validation_loss"]:.3e} | '
+                    f'Validation {losses["validation_loss"]:.3e}'
+                    f'{test_str} | '
                     f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                     f'lr {model_handler.optimizer.current_lr():.2e}'
                 )
@@ -729,13 +738,13 @@ class ConsoleLogger(Callback):
                 [f'{name}: {losses[name]:.3e}' for name in model_handler.regularization.term_names]
             )
             message = (
-                f'\r[{pd.Timestamp.now():%H:%M:%S}] '
-                f'{model_handler.epoch + 1: >5} {dt_str} | '
+                f'[{pd.Timestamp.now():%H:%M:%S}] '
+                f'{display_epoch: >5} {dt_str} | '
                 f'Reg {losses["regularization_loss"]:.3e} | {reg_str} | '
                 f'Best {best_loss:.3e} (no change for {epochs_since_best: >4}) | '
                 f'lr {model_handler.optimizer.current_lr():.2e}'
             )
-        self._write_progress(message)
+        return message
 
     def _should_update_progress(self) -> bool:
         now = time.perf_counter()
@@ -757,10 +766,32 @@ class ConsoleLogger(Callback):
         self.stream.flush()
         self._last_message_length = 0
 
+    def _final_test_loss(self, model_handler) -> float:
+        if not getattr(model_handler, 'evaluate_test', False):
+            return np.nan
+        test_loss = model_handler.evaluate_test_loss()
+        if not np.isnan(test_loss):
+            model_handler._test_loss_shown = True
+        return test_loss
+
+    def _leave_progress(self, model_handler, test_loss: float = np.nan) -> None:
+        if not self.progress or getattr(model_handler, 'current_evolution', None) is None:
+            return
+        self._write_progress(self._format_progress_message(model_handler, test_loss=test_loss))
+        self.stream.write('\n')
+        self.stream.flush()
+        self._last_message_length = 0
+
     def on_train_end(self, model_handler):
         if not self.run_on_train_end:
             return
-        self._clear_progress()
+        test_loss = self._final_test_loss(model_handler) if self.progress else np.nan
+        if self.leave_last_message:
+            self._leave_progress(model_handler, test_loss=test_loss)
+        else:
+            self._clear_progress()
+            if not np.isnan(test_loss):
+                logger.info('Test loss: %.3e', test_loss)
         if not self.log_summary:
             return
         message = (
@@ -842,16 +873,7 @@ class RunSummaryLogger(Callback):
         model_handler.run_summary = self.run_summary
 
     def _test_loss(self, model_handler) -> float:
-        if not self.evaluate_test:
-            return np.nan
-        if not model_handler.has_data:
-            return np.nan
-        if model_handler.data_fitting.data_handler.n_data['test'] == 0:
-            logger.warning('evaluate_test=True, but no test data is available.')
-            return np.nan
-        if model_handler.has_reg:
-            return model_handler._get_loss('test')['data']
-        return model_handler._get_loss('test')['total']
+        return model_handler.evaluate_test_loss(enabled=self.evaluate_test)
 
     @staticmethod
     def _recorded_loss(model_handler, total_key: str, data_key: str) -> float:
@@ -866,8 +888,9 @@ class RunSummaryLogger(Callback):
         if not self.run_on_train_end:
             return
         test_loss = self._test_loss(model_handler)
-        if self.show_test and not np.isnan(test_loss):
+        if self.show_test and not np.isnan(test_loss) and not getattr(model_handler, '_test_loss_shown', False):
             logger.info('Test loss: %.3e', test_loss)
+            model_handler._test_loss_shown = True
 
         row = [
             pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),

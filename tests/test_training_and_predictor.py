@@ -135,6 +135,7 @@ def test_model_handler_can_evaluate_test_loss_in_run_summary(tmp_path):
 
     summary = pd.read_csv(tmp_path / 'run_summary.csv')
     assert pd.notna(summary.loc[0, 'test_loss'])
+    assert summary.loc[0, 'test_loss'] == model_handler.test_loss
 
 
 def test_model_handler_can_skip_heavy_model_files(tmp_path):

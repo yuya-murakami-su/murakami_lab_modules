@@ -14,6 +14,8 @@ from .. import utils
 
 __all__ = ['ModelHandler']
 
+logger = utils.get_logger(__name__)
+
 
 class ModelHandler:
     """Coordinate model training, callbacks, saving, and summaries.
@@ -258,6 +260,9 @@ class ModelHandler:
         self.current_evolution = None
         self.current_train_losses = None
         self.current_validation_losses = None
+        self.test_loss = np.nan
+        self._test_loss_evaluated = False
+        self._test_loss_shown = False
 
     def _should_run_callback(self, cb, method: str, interval: bool) -> bool:
         if not interval:
@@ -313,6 +318,28 @@ class ModelHandler:
 
         self.stop_training = True
         self.stop_reason = reason
+
+    def evaluate_test_loss(self, enabled: bool = None) -> float:
+        """Return the cached test loss, evaluating it once when requested."""
+
+        enabled = self.evaluate_test if enabled is None else bool(enabled)
+        if not enabled:
+            return np.nan
+        if self._test_loss_evaluated:
+            return self.test_loss
+        self._test_loss_evaluated = True
+        if not self.has_data:
+            self.test_loss = np.nan
+            return self.test_loss
+        if self.data_fitting.data_handler.n_data['test'] == 0:
+            logger.warning('evaluate_test=True, but no test data is available.')
+            self.test_loss = np.nan
+            return self.test_loss
+        if self.has_reg:
+            self.test_loss = self._get_loss('test')['data']
+        else:
+            self.test_loss = self._get_loss('test')['total']
+        return self.test_loss
 
     def _get_loss(self, phase: str):
         if phase == 'train':
